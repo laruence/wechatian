@@ -905,13 +905,19 @@ sender: ${msg.from}
 }
 
 // src/core/agent-guide.ts
-function agentGuideLang(content) {
-  const m = /^---\s*\nlang:\s*(\w+)/.exec(content);
-  return m?.[1] ?? "";
+function agentGuideMeta(content) {
+  const fm = /^---\s*\n([\s\S]*?)\n---/.exec(content)?.[1] ?? "";
+  const lang = /lang:\s*"?(\w+)"?/.exec(fm)?.[1] ?? "";
+  const paths = /paths:\s*"([^"]*)"/.exec(fm)?.[1] ?? "";
+  return { lang, paths };
+}
+function pathsKey(s) {
+  return [s.inboxFolder, s.outboxFolder, s.sentFolder, s.attachmentFolder].join("|");
 }
 function buildEn(s) {
   return `---
 lang: en
+paths: "${pathsKey(s)}"
 ---
 
 # WeChat Send (Wechatian)
@@ -939,6 +945,7 @@ The gateway rate-limits proactive sends (~4-6 per day). Use this channel for not
 function buildZh(s) {
   return `---
 lang: zh
+paths: "${pathsKey(s)}"
 ---
 
 # \u5FAE\u4FE1\u53D1\u9001(Wechatian)
@@ -968,12 +975,12 @@ async function ensureAgentGuide(app, s, lang) {
   const target = lang === "zh" ? buildZh(s) : buildEn(s);
   try {
     if (await app.vault.adapter.exists(path)) {
-      const cur = await app.vault.adapter.read(path);
-      if (agentGuideLang(cur) === lang) return;
-      await app.vault.adapter.write(path, target);
+      const cur = agentGuideMeta(await app.vault.adapter.read(path));
+      if (cur.lang === lang && cur.paths === pathsKey(s)) return;
     } else {
-      await app.vault.adapter.write(path, target);
+      await ensureFolder(app, s.inboxFolder);
     }
+    await app.vault.adapter.write(path, target);
   } catch {
   }
 }
@@ -1494,30 +1501,35 @@ var WechatianSettingTab = class extends import_obsidian4.PluginSettingTab {
       (t2) => t2.setValue(this.plugin.settings.inboxFolder).onChange(async (v) => {
         this.plugin.settings.inboxFolder = v.trim() || "Wechatian";
         await this.plugin.saveSettings();
+        this.plugin.refreshAgentGuide();
       })
     );
     new import_obsidian4.Setting(containerEl).setName(t("set.attachmentFolder")).setDesc(t("set.attachmentFolder.desc")).addText(
       (t2) => t2.setValue(this.plugin.settings.attachmentFolder).onChange(async (v) => {
         this.plugin.settings.attachmentFolder = v.trim() || "Wechatian/attachments";
         await this.plugin.saveSettings();
+        this.plugin.refreshAgentGuide();
       })
     );
     new import_obsidian4.Setting(containerEl).setName(t("set.articleFolder")).setDesc(t("set.articleFolder.desc")).addText(
       (t2) => t2.setValue(this.plugin.settings.articleFolder).onChange(async (v) => {
         this.plugin.settings.articleFolder = v.trim() || "Wechatian/articles";
         await this.plugin.saveSettings();
+        this.plugin.refreshAgentGuide();
       })
     );
     new import_obsidian4.Setting(containerEl).setName(t("set.outboxFolder")).setDesc(t("set.outboxFolder.desc")).addText(
       (t2) => t2.setValue(this.plugin.settings.outboxFolder).onChange(async (v) => {
         this.plugin.settings.outboxFolder = v.trim() || "Wechatian/outbox";
         await this.plugin.saveSettings();
+        this.plugin.refreshAgentGuide();
       })
     );
     new import_obsidian4.Setting(containerEl).setName(t("set.sentFolder")).setDesc(t("set.sentFolder.desc")).addText(
       (t2) => t2.setValue(this.plugin.settings.sentFolder).onChange(async (v) => {
         this.plugin.settings.sentFolder = v.trim() || "Wechatian/sentbox";
         await this.plugin.saveSettings();
+        this.plugin.refreshAgentGuide();
       })
     );
     new import_obsidian4.Setting(containerEl).setName(t("set.autoImport")).setDesc(t("set.autoImport.desc")).addToggle(
@@ -1925,6 +1937,10 @@ var WechatianPlugin = class extends import_obsidian6.Plugin {
 `);
     } catch {
     }
+  }
+  /** Directory settings changed: re-sync Agent.md with the new paths */
+  refreshAgentGuide() {
+    void ensureAgentGuide(this.app, this.settings, resolvedLanguage());
   }
   /** Status-bar rendering */
   renderStatus() {

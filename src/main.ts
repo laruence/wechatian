@@ -124,6 +124,11 @@ export default class WechatianPlugin extends Plugin {
     }
   }
 
+  /** Directory settings changed: re-sync Agent.md with the new paths */
+  refreshAgentGuide(): void {
+    void ensureAgentGuide(this.app, this.settings, resolvedLanguage());
+  }
+
   /** Status-bar rendering */
   private renderStatus(): void {
     if (!this.statusBar) return;

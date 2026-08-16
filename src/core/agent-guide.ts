@@ -1,16 +1,24 @@
-/** Wechat/Agent.md: instructions for AI agents on how to use the outbox channel */
+/** <inbox>/Agent.md: instructions for AI agents on how to use the outbox channel */
 import type { App } from 'obsidian';
 import type { WechatianSettings } from '../settings';
+import { ensureFolder } from './importer';
 
-/** Language of the current Agent.md; written as a frontmatter field so regeneration can follow the UI language */
-export function agentGuideLang(content: string): string {
-  const m = /^---\s*\nlang:\s*(\w+)/.exec(content);
-  return m?.[1] ?? '';
+/** Generation fingerprint of an Agent.md: regenerated whenever the language or any path changes */
+export function agentGuideMeta(content: string): { lang: string; paths: string } {
+  const fm = /^---\s*\n([\s\S]*?)\n---/.exec(content)?.[1] ?? '';
+  const lang = /lang:\s*"?(\w+)"?/.exec(fm)?.[1] ?? '';
+  const paths = /paths:\s*"([^"]*)"/.exec(fm)?.[1] ?? '';
+  return { lang, paths };
+}
+
+function pathsKey(s: WechatianSettings): string {
+  return [s.inboxFolder, s.outboxFolder, s.sentFolder, s.attachmentFolder].join('|');
 }
 
 function buildEn(s: WechatianSettings): string {
   return `---
 lang: en
+paths: "${pathsKey(s)}"
 ---
 
 # WeChat Send (Wechatian)
@@ -39,6 +47,7 @@ The gateway rate-limits proactive sends (~4-6 per day). Use this channel for not
 function buildZh(s: WechatianSettings): string {
   return `---
 lang: zh
+paths: "${pathsKey(s)}"
 ---
 
 # 微信发送(Wechatian)
@@ -64,18 +73,22 @@ lang: zh
 `;
 }
 
-/** (Re)generate Wechat/Agent.md whenever the UI language changes */
+/**
+ * (Re)generate <inbox>/Agent.md. Rewrites whenever the UI language or any of the
+ * directory settings changed since the file was generated; user edits made while
+ * both stay the same are preserved.
+ */
 export async function ensureAgentGuide(app: App, s: WechatianSettings, lang: 'en' | 'zh'): Promise<void> {
   const path = `${s.inboxFolder}/Agent.md`;
   const target = lang === 'zh' ? buildZh(s) : buildEn(s);
   try {
     if (await app.vault.adapter.exists(path)) {
-      const cur = await app.vault.adapter.read(path);
-      if (agentGuideLang(cur) === lang) return; // already up to date; user edits in the same language are preserved
-      await app.vault.adapter.write(path, target);
+      const cur = agentGuideMeta(await app.vault.adapter.read(path));
+      if (cur.lang === lang && cur.paths === pathsKey(s)) return;
     } else {
-      await app.vault.adapter.write(path, target);
+      await ensureFolder(app, s.inboxFolder);
     }
+    await app.vault.adapter.write(path, target);
   } catch {
     /* a missing guide is cosmetic; never break startup */
   }

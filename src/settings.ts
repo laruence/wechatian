@@ -89,6 +89,7 @@ export class WechatianSettingTab extends PluginSettingTab {
         t2.setValue(this.plugin.settings.inboxFolder).onChange(async (v) => {
           this.plugin.settings.inboxFolder = v.trim() || 'Wechatian';
           await this.plugin.saveSettings();
+          this.plugin.refreshAgentGuide(); // paths changed -> Agent.md must point at the new folders
         }),
       );
 
@@ -99,6 +100,7 @@ export class WechatianSettingTab extends PluginSettingTab {
         t2.setValue(this.plugin.settings.attachmentFolder).onChange(async (v) => {
           this.plugin.settings.attachmentFolder = v.trim() || 'Wechatian/attachments';
           await this.plugin.saveSettings();
+          this.plugin.refreshAgentGuide();
         }),
       );
 
@@ -109,6 +111,7 @@ export class WechatianSettingTab extends PluginSettingTab {
         t2.setValue(this.plugin.settings.articleFolder).onChange(async (v) => {
           this.plugin.settings.articleFolder = v.trim() || 'Wechatian/articles';
           await this.plugin.saveSettings();
+          this.plugin.refreshAgentGuide();
         }),
       );
 
@@ -119,6 +122,7 @@ export class WechatianSettingTab extends PluginSettingTab {
         t2.setValue(this.plugin.settings.outboxFolder).onChange(async (v) => {
           this.plugin.settings.outboxFolder = v.trim() || 'Wechatian/outbox';
           await this.plugin.saveSettings();
+          this.plugin.refreshAgentGuide();
         }),
       );
 
@@ -129,6 +133,7 @@ export class WechatianSettingTab extends PluginSettingTab {
         t2.setValue(this.plugin.settings.sentFolder).onChange(async (v) => {
           this.plugin.settings.sentFolder = v.trim() || 'Wechatian/sentbox';
           await this.plugin.saveSettings();
+          this.plugin.refreshAgentGuide();
         }),
       );
 
