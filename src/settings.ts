@@ -189,7 +189,7 @@ export class WechatianSettingTab extends PluginSettingTab {
         .addButton((b) =>
           b
             .setButtonText(t('login.logout'))
-            .setWarning()
+            .setDestructive()
             .onClick(async () => {
               this.plugin.disconnect();
               this.plugin.clearCredentials();
@@ -205,7 +205,7 @@ export class WechatianSettingTab extends PluginSettingTab {
         .setDesc(t('sendTest.desc'))
         .addText((txt) => {
           txt.setPlaceholder("Hello, I'm Wechatian").setValue("Hello, I'm Wechatian");
-          txt.inputEl.style.minWidth = '240px';
+          txt.inputEl.addClass('wechatian-send-input');
           testInput = txt;
         })
         .addButton((b) => {
@@ -230,7 +230,7 @@ export class WechatianSettingTab extends PluginSettingTab {
         });
     } else {
       section.createEl('p', { text: t('login.notLoggedIn') });
-      this.startInlineLogin(section);
+      void this.startInlineLogin(section);
     }
   }
 

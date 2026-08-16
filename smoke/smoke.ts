@@ -3,11 +3,11 @@
  * Usage: node scripts/smoke.js [qrcode|status <qrkey>|poll <token>|send|sendfile]
  */
 import { readFileSync } from 'fs';
-import type { HttpResponse, HttpTransport } from './core/http';
-import { lowerHeaders } from './core/http';
-import { fetchBotQrCode, pollQrStatus } from './core/qrlogin';
-import { IlinkClient, isVideoExt } from './core/ilink';
-import type { OutboundAttachment } from './core/types';
+import type { HttpResponse, HttpTransport } from '../src/core/http';
+import { lowerHeaders } from '../src/core/http';
+import { fetchBotQrCode, pollQrStatus } from '../src/core/qrlogin';
+import { IlinkClient, isVideoExt } from '../src/core/ilink';
+import type { OutboundAttachment } from '../src/core/types';
 
 const BASE = 'https://ilinkai.weixin.qq.com';
 const CDN = 'https://novac2c.cdn.weixin.qq.com/c2c';

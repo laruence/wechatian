@@ -27,11 +27,11 @@ async function build() {
   }
 
   // 冒烟测试入口(node 环境,验证 ilink 协议)
-  if (fs.existsSync('src/smoke.ts')) {
+  if (fs.existsSync('smoke/smoke.ts')) {
     await esbuild.build({
-      entryPoints: ['src/smoke.ts'],
+      entryPoints: ['smoke/smoke.ts'],
       bundle: true,
-      external: ['crypto'],
+      external: ['obsidian', 'crypto'],
       format: 'cjs',
       target: 'es2022',
       platform: 'node',
@@ -40,8 +40,10 @@ async function build() {
     });
   }
 
-  // 分发到 .obsidian/plugins/wechatian/
-  const dest = path.resolve(__dirname, '../.obsidian/plugins/wechatian');
+  // 分发到 vault 的插件目录(可用 OBSIDIAN_PLUGIN_DIR 覆盖)
+  const dest =
+    process.env.OBSIDIAN_PLUGIN_DIR ??
+    path.join(process.env.HOME ?? '', 'Library/Mobile Documents/iCloud~md~obsidian/Documents/Laruence/.obsidian/plugins/wechatian');
   fs.mkdirSync(dest, { recursive: true });
   fs.copyFileSync(path.resolve(__dirname, 'main.js'), path.join(dest, 'main.js'));
   fs.copyFileSync(path.resolve(__dirname, 'manifest.json'), path.join(dest, 'manifest.json'));

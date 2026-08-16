@@ -30,3 +30,31 @@
   margin: 8px auto 0;
   text-align: center;
 }
+
+/* Modal hint paragraph */
+.wechatian-qr-hint {
+  margin-bottom: 12px;
+}
+
+/* QR container centered inside the scan modal */
+.wechatian-qr-center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin: 12px 0;
+}
+
+/* "Open on phone" fallback link below the QR canvas */
+.wechatian-qr-link {
+  font-size: 11px;
+  color: var(--text-faint);
+  word-break: break-all;
+  max-width: 300px;
+  margin-top: 8px;
+  text-align: center;
+}
+
+/* Test-send input on the settings page */
+.wechatian-send-input {
+  min-width: 240px;
+}

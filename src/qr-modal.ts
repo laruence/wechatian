@@ -23,15 +23,9 @@ export class QrLoginModal extends Modal {
     const { contentEl } = this;
     contentEl.empty();
     contentEl.createEl('h3', { text: t('modal.title') });
-    const hint = contentEl.createEl('p', {
-      text: t('modal.hint'),
-      cls: 'setting-item-description',
-    });
-    hint.style.marginBottom = '12px';
-    this.qrEl = contentEl.createDiv({ cls: 'wechatian-qr' });
-    this.qrEl.style.cssText = 'display:flex;justify-content:center;margin:12px 0;';
-    this.statusEl = contentEl.createEl('p', { text: t('login.fetching') });
-    this.statusEl.style.textAlign = 'center';
+    contentEl.createEl('p', { text: t('modal.hint'), cls: 'wechatian-qr-hint' });
+    this.qrEl = contentEl.createDiv({ cls: 'wechatian-qr wechatian-qr-center' });
+    this.statusEl = contentEl.createEl('p', { text: t('login.fetching'), cls: 'wechatian-qr-status' });
 
     void loginLoop(this.transport, this.baseUrl, {
       onQr: (url) => {
@@ -57,7 +51,7 @@ export class QrLoginModal extends Modal {
       const cell = 6;
       const quiet = 4;
       const n = qr.size + quiet * 2;
-      const canvas = this.qrEl.createEl('canvas');
+      const canvas = this.qrEl.createEl('canvas', { cls: 'wechatian-qr-canvas' });
       canvas.width = n * cell;
       canvas.height = n * cell;
       const ctx = canvas.getContext('2d');
@@ -72,10 +66,8 @@ export class QrLoginModal extends Modal {
           }
         }
       }
-      // Fallback: URL text (open directly on the phone when scanning is inconvenient)
-      const link = this.qrEl.createEl('div');
-      link.style.cssText = 'font-size:11px;color:#888;word-break:break-all;max-width:300px;margin-top:8px;text-align:center;';
-      link.createEl('a', { text: t('modal.openLink'), href: url });
+      // Fallback: URL link (open directly on the phone when scanning is inconvenient)
+      this.qrEl.createEl('a', { text: t('modal.openLink'), href: url, cls: 'wechatian-qr-link' });
     } catch (e) {
       this.qrEl.createEl('p', { text: t('modal.renderFailed', { err: String((e as Error)?.message ?? e) }) });
     }

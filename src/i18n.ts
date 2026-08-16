@@ -1,4 +1,5 @@
-/** i18n: explicit user choice wins; 'system' follows Obsidian's language (localStorage 'language') */
+/** i18n: explicit user choice wins; 'system' follows Obsidian's language */
+import { getLanguage as obsidianLanguage } from 'obsidian';
 
 type Dict = Record<string, string>;
 export type UiLanguage = 'system' | 'en' | 'zh';
@@ -181,8 +182,7 @@ const zh: Dict = {
 
 function detectDict(): Dict {
   try {
-    const lang = (typeof localStorage !== 'undefined' ? localStorage.getItem('language') : '') ?? '';
-    return lang.toLowerCase().startsWith('zh') ? zh : en;
+    return obsidianLanguage().toLowerCase().startsWith('zh') ? zh : en;
   } catch {
     return en;
   }
@@ -195,10 +195,6 @@ let choice: UiLanguage = 'system';
 export function applyLanguage(lang: UiLanguage): void {
   choice = lang;
   dict = lang === 'system' ? detectDict() : lang === 'zh' ? zh : en;
-}
-
-export function getLanguage(): UiLanguage {
-  return choice;
 }
 
 /** The concrete dictionary currently in effect ('system' already resolved) */

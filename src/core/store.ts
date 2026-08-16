@@ -19,7 +19,7 @@ const DEDUP_KEEP = 500;
 
 export class StateStore {
   private state: BotState;
-  private saveTimer: ReturnType<typeof setTimeout> | null = null;
+  private saveTimer: number | null = null;
 
   constructor(
     private app: App,
@@ -53,7 +53,7 @@ export class StateStore {
     try {
       if (await this.app.vault.adapter.exists(this.file)) {
         const raw = await this.app.vault.adapter.read(this.file);
-        this.state = { ...this.emptyState(), ...JSON.parse(raw) };
+        this.state = { ...this.emptyState(), ...(JSON.parse(raw) as Partial<BotState>) };
       }
     } catch {
       /* fall back to empty state when the stored state is corrupted */
@@ -71,7 +71,7 @@ export class StateStore {
 
   private scheduleSave(): void {
     if (this.saveTimer) return;
-    this.saveTimer = setTimeout(() => {
+    this.saveTimer = window.setTimeout(() => {
       this.saveTimer = null;
       void this.saveNow();
     }, 300);

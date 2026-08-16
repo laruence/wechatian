@@ -73,7 +73,7 @@ export class IlinkClient {
     return Buffer.from(String(n)).toString('base64');
   }
 
-  private post(path: string, body: object, timeoutMs: number): Promise<ReturnType<typeof bodyJson<any>>> {
+  private post<T>(path: string, body: object, timeoutMs: number): Promise<T> {
     const url = `${this.opts.baseUrl.replace(/\/$/, '')}/${path}`;
     return this.transport
       .post(url, this.authHeaders(), JSON.stringify(body), timeoutMs)
@@ -81,7 +81,7 @@ export class IlinkClient {
         if (r.status !== 200) {
           throw new HttpError(`${path} http ${r.status}`, r.status);
         }
-        return bodyJson<any>(r);
+        return bodyJson<T>(r);
       });
   }
 
@@ -91,11 +91,11 @@ export class IlinkClient {
    */
   async poll(cursor: string): Promise<PollResult> {
     try {
-      const resp = (await this.post(
+      const resp = await this.post<GetUpdatesResult>(
         'ilink/bot/getupdates',
         { get_updates_buf: cursor, base_info: { channel_version: this.channelVersion } },
         this.longPollTimeoutMs + 10_000,
-      )) as GetUpdatesResult;
+      );
 
       if (resp.errcode === ERRCODE_SESSION_EXPIRED) {
         return { messages: [], sessionExpired: true };
@@ -240,7 +240,7 @@ export class IlinkClient {
       const text0 = bodyText(resp);
       let parsed: { ret?: number; errcode?: number; errmsg?: string } = {};
       try {
-        parsed = JSON.parse(text0);
+        parsed = JSON.parse(text0) as { ret?: number; errcode?: number; errmsg?: string };
       } catch {
         /* non-JSON ack: keep defaults */
       }
@@ -290,7 +290,7 @@ export class IlinkClient {
       const text0 = bodyText(resp);
       let parsed: { ret?: number; errcode?: number; errmsg?: string } = {};
       try {
-        parsed = JSON.parse(text0);
+        parsed = JSON.parse(text0) as { ret?: number; errcode?: number; errmsg?: string };
       } catch {
         /* non-JSON ack: keep defaults */
       }
@@ -314,7 +314,7 @@ export class IlinkClient {
     const mediaType = att.kind === 'image' ? UPLOAD_MEDIA_IMAGE : att.kind === 'video' ? UPLOAD_MEDIA_VIDEO : UPLOAD_MEDIA_FILE;
     const plain = Buffer.from(att.data.buffer, att.data.byteOffset, att.data.byteLength);
 
-    const up = (await this.post(
+    const up = await this.post<GetUploadUrlResult>(
       'ilink/bot/getuploadurl',
       {
         filekey,
@@ -328,7 +328,7 @@ export class IlinkClient {
         base_info: { channel_version: this.channelVersion },
       },
       15_000,
-    )) as GetUploadUrlResult;
+    );
     if ((up.errcode ?? 0) !== 0) throw new Error(`getuploadurl errcode=${up.errcode} ${up.errmsg ?? ''}`);
 
     // Newer gateways return the full CDN URL; older ones return upload_param
@@ -425,7 +425,7 @@ export function randomHex(n: number): string {
 }
 
 export function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
+  return new Promise((r) => window.setTimeout(r, ms));
 }
 
 /** 100MB CDN limit, aligned with cc-connect */

@@ -20,9 +20,9 @@ export class ObsidianTransport implements HttpTransport {
     timeoutMs: number,
   ): Promise<HttpResponse> {
     // requestUrl has no official timeout parameter; race a timer and treat it as a timeout when it fires
-    let timer: ReturnType<typeof setTimeout> | null = null;
+    let timer: number | null = null;
     const timeoutPromise = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new HttpError('request timeout', 0, true)), timeoutMs);
+      timer = window.setTimeout(() => reject(new HttpError('request timeout', 0, true)), timeoutMs);
     });
     try {
       const resp = await Promise.race([
@@ -35,7 +35,7 @@ export class ObsidianTransport implements HttpTransport {
       const msg = String((e as Error)?.message ?? e);
       throw new HttpError(msg, 0, /abort|timeout|timed out/i.test(msg));
     } finally {
-      if (timer) clearTimeout(timer);
+      if (timer) window.clearTimeout(timer);
     }
   }
 }

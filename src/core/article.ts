@@ -11,7 +11,7 @@ export interface ArticleInfo {
 /** Extract links from message text */
 export function extractLinks(text: string): string[] {
   const out: string[] = [];
-  const re = /https?:\/\/[^\s　<>"'，。、）》]+/g;
+  const re = /https?:\/\/[^\s<>"'，。、）》]+/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) {
     out.push(m[0].replace(/[.,!?;:]+$/, ''));

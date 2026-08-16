@@ -123,7 +123,6 @@ function interleave(codewords: number[], version: number): number[] {
   return out;
 }
 
-type Module = number; // -1 = unset
 const MASK_FNS = [
   (r: number, c: number) => (r + c) % 2 === 0,
   (r: number) => r % 2 === 0,

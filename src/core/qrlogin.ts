@@ -20,7 +20,7 @@ export async function fetchBotQrCode(transport: HttpTransport, apiBase: string):
   const u = `${apiBase.replace(/\/$/, '')}/ilink/bot/get_bot_qrcode?bot_type=3`;
   const resp = await transport.get(u, {}, 20_000);
   if (resp.status !== 200) throw new Error(`get_bot_qrcode http ${resp.status}`);
-  const out = await bodyJson<QrCodeResult>(resp);
+  const out = bodyJson<QrCodeResult>(resp);
   if (!out.qrcode || !out.qrcode_img_content) {
     throw new Error(t('qr.missingInResponse', { resp: JSON.stringify(out).slice(0, 200) }));
   }
@@ -33,7 +33,7 @@ export async function pollQrStatus(transport: HttpTransport, apiBase: string, qr
   try {
     const resp = await transport.get(u, { 'iLink-App-ClientVersion': '1' }, QR_POLL_TIMEOUT + 5000);
     if (resp.status !== 200) throw new Error(`get_qrcode_status http ${resp.status}`);
-    return await bodyJson<QrStatusResult>(resp);
+    return bodyJson<QrStatusResult>(resp);
   } catch (e) {
     if ((e as { timeout?: boolean }).timeout) return { status: 'wait' };
     throw e;
@@ -154,5 +154,5 @@ export async function loginLoop(
 }
 
 function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
+  return new Promise((r) => window.setTimeout(r, ms));
 }
