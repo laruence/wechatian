@@ -189,11 +189,9 @@ function detectDict(): Dict {
 }
 
 let dict: Dict = detectDict();
-let choice: UiLanguage = 'system';
 
 /** Apply the user's language choice; 'system' re-detects Obsidian's language */
 export function applyLanguage(lang: UiLanguage): void {
-  choice = lang;
   dict = lang === 'system' ? detectDict() : lang === 'zh' ? zh : en;
 }
 

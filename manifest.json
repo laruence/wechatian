@@ -2,7 +2,7 @@
   "id": "wechatian",
   "name": "Wechatian",
   "version": "0.1.0",
-  "minAppVersion": "1.5.0",
+  "minAppVersion": "1.13.0",
   "description": "WeChat messaging bridge: send and receive messages, attachments, and articles between WeChat and your vault.",
   "author": "Laruence",
   "authorUrl": "https://github.com/laruence",

@@ -36,7 +36,7 @@ function gfMul(a: number, b: number): number {
 }
 
 function polyMul(a: number[], b: number[]): number[] {
-  const r = new Array(a.length + b.length - 1).fill(0);
+  const r = new Array<number>(a.length + b.length - 1).fill(0);
   for (let i = 0; i < a.length; i++) {
     for (let j = 0; j < b.length; j++) {
       r[i + j] ^= gfMul(a[i], b[j]);
@@ -53,7 +53,7 @@ function rsGenPoly(n: number): number[] {
 
 function rsEncode(data: number[], eccLen: number): number[] {
   const gen = rsGenPoly(eccLen);
-  const msg = new Array(data.length + eccLen).fill(0);
+  const msg = new Array<number>(data.length + eccLen).fill(0);
   for (let i = 0; i < data.length; i++) msg[i] = data[i];
   for (let i = 0; i < data.length; i++) {
     const coef = msg[i];

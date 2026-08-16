@@ -776,9 +776,7 @@ function detectDict() {
   }
 }
 var dict = detectDict();
-var choice = "system";
 function applyLanguage(lang) {
-  choice = lang;
   dict = lang === "system" ? detectDict() : lang === "zh" ? zh : en;
 }
 function resolvedLanguage() {
@@ -1467,6 +1465,7 @@ var DEFAULT_SETTINGS = {
   autoImport: true,
   notifyOnMessage: true
 };
+var FOLDER_KEYS = ["inboxFolder", "attachmentFolder", "articleFolder", "outboxFolder", "sentFolder"];
 var WechatianSettingTab = class extends import_obsidian4.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
@@ -1477,89 +1476,94 @@ var WechatianSettingTab = class extends import_obsidian4.PluginSettingTab {
   hide() {
     this.alive = false;
   }
-  display() {
-    this.alive = true;
-    const { containerEl } = this;
-    containerEl.empty();
-    new import_obsidian4.Setting(containerEl).setName(t("set.autoConnect")).setDesc(t("set.autoConnect.desc")).addToggle(
-      (t2) => t2.setValue(this.plugin.settings.enabled).onChange(async (v) => {
-        this.plugin.settings.enabled = v;
-        await this.plugin.saveSettings();
-      })
-    );
-    new import_obsidian4.Setting(containerEl).setName(t("set.language")).setDesc(t("set.language.desc")).addDropdown((d) => {
-      d.addOption("system", t("set.language.system")).addOption("en", "English").addOption("zh", "\u4E2D\u6587").setValue(this.plugin.settings.language).onChange(async (v) => {
-        const lang = ["system", "en", "zh"].includes(v) ? v : "system";
-        this.plugin.settings.language = lang;
-        await this.plugin.saveSettings();
-        this.plugin.applyLanguage(lang);
-        this.display();
-      });
-    });
-    this.renderLoginSection(containerEl);
-    new import_obsidian4.Setting(containerEl).setName(t("set.inboxFolder")).setDesc(t("set.inboxFolder.desc")).addText(
-      (t2) => t2.setValue(this.plugin.settings.inboxFolder).onChange(async (v) => {
-        this.plugin.settings.inboxFolder = v.trim() || "Wechatian";
-        await this.plugin.saveSettings();
-        this.plugin.refreshAgentGuide();
-      })
-    );
-    new import_obsidian4.Setting(containerEl).setName(t("set.attachmentFolder")).setDesc(t("set.attachmentFolder.desc")).addText(
-      (t2) => t2.setValue(this.plugin.settings.attachmentFolder).onChange(async (v) => {
-        this.plugin.settings.attachmentFolder = v.trim() || "Wechatian/attachments";
-        await this.plugin.saveSettings();
-        this.plugin.refreshAgentGuide();
-      })
-    );
-    new import_obsidian4.Setting(containerEl).setName(t("set.articleFolder")).setDesc(t("set.articleFolder.desc")).addText(
-      (t2) => t2.setValue(this.plugin.settings.articleFolder).onChange(async (v) => {
-        this.plugin.settings.articleFolder = v.trim() || "Wechatian/articles";
-        await this.plugin.saveSettings();
-        this.plugin.refreshAgentGuide();
-      })
-    );
-    new import_obsidian4.Setting(containerEl).setName(t("set.outboxFolder")).setDesc(t("set.outboxFolder.desc")).addText(
-      (t2) => t2.setValue(this.plugin.settings.outboxFolder).onChange(async (v) => {
-        this.plugin.settings.outboxFolder = v.trim() || "Wechatian/outbox";
-        await this.plugin.saveSettings();
-        this.plugin.refreshAgentGuide();
-      })
-    );
-    new import_obsidian4.Setting(containerEl).setName(t("set.sentFolder")).setDesc(t("set.sentFolder.desc")).addText(
-      (t2) => t2.setValue(this.plugin.settings.sentFolder).onChange(async (v) => {
-        this.plugin.settings.sentFolder = v.trim() || "Wechatian/sentbox";
-        await this.plugin.saveSettings();
-        this.plugin.refreshAgentGuide();
-      })
-    );
-    new import_obsidian4.Setting(containerEl).setName(t("set.autoImport")).setDesc(t("set.autoImport.desc")).addToggle(
-      (t2) => t2.setValue(this.plugin.settings.autoImport).onChange(async (v) => {
-        this.plugin.settings.autoImport = v;
-        await this.plugin.saveSettings();
-      })
-    );
-    new import_obsidian4.Setting(containerEl).setName(t("set.fetchArticles")).setDesc(t("set.fetchArticles.desc")).addToggle(
-      (t2) => t2.setValue(this.plugin.settings.fetchArticles).onChange(async (v) => {
-        this.plugin.settings.fetchArticles = v;
-        await this.plugin.saveSettings();
-      })
-    );
-    new import_obsidian4.Setting(containerEl).setName(t("set.notify")).addToggle(
-      (t2) => t2.setValue(this.plugin.settings.notifyOnMessage).onChange(async (v) => {
-        this.plugin.settings.notifyOnMessage = v;
-        await this.plugin.saveSettings();
-      })
-    );
-    containerEl.createEl("p", {
-      text: t("set.footer"),
-      cls: "setting-item-description"
-    });
-    new import_obsidian4.Setting(containerEl).setName(t("set.agentGuide")).setDesc(
-      t("set.agentGuide.desc", { path: `${this.plugin.settings.inboxFolder}/Agent.md` })
-    );
+  getControlValue(key) {
+    return this.plugin.settings[key];
+  }
+  setControlValue(key, value) {
+    this.plugin.settings[key] = value;
+    if (key === "language") {
+      this.plugin.applyLanguage(value);
+      this.update();
+    }
+    if (FOLDER_KEYS.includes(key)) this.plugin.refreshAgentGuide();
+    void this.plugin.saveSettings();
+  }
+  getSettingDefinitions() {
+    return [
+      {
+        name: t("set.autoConnect"),
+        desc: t("set.autoConnect.desc"),
+        control: { type: "toggle", key: "enabled", defaultValue: DEFAULT_SETTINGS.enabled }
+      },
+      {
+        name: t("set.language"),
+        desc: t("set.language.desc"),
+        control: {
+          type: "dropdown",
+          key: "language",
+          defaultValue: DEFAULT_SETTINGS.language,
+          options: { system: t("set.language.system"), en: "English", zh: "\u4E2D\u6587" }
+        }
+      },
+      // Login section: dynamic QR flow, rendered imperatively via the escape hatch
+      { name: t("login.status"), render: (setting) => this.renderLoginSection(setting.settingEl) },
+      {
+        name: t("set.inboxFolder"),
+        desc: t("set.inboxFolder.desc"),
+        control: { type: "text", key: "inboxFolder", defaultValue: DEFAULT_SETTINGS.inboxFolder }
+      },
+      {
+        name: t("set.attachmentFolder"),
+        desc: t("set.attachmentFolder.desc"),
+        control: { type: "text", key: "attachmentFolder", defaultValue: DEFAULT_SETTINGS.attachmentFolder }
+      },
+      {
+        name: t("set.articleFolder"),
+        desc: t("set.articleFolder.desc"),
+        control: { type: "text", key: "articleFolder", defaultValue: DEFAULT_SETTINGS.articleFolder }
+      },
+      {
+        name: t("set.outboxFolder"),
+        desc: t("set.outboxFolder.desc"),
+        control: { type: "text", key: "outboxFolder", defaultValue: DEFAULT_SETTINGS.outboxFolder }
+      },
+      {
+        name: t("set.sentFolder"),
+        desc: t("set.sentFolder.desc"),
+        control: { type: "text", key: "sentFolder", defaultValue: DEFAULT_SETTINGS.sentFolder }
+      },
+      {
+        name: t("set.autoImport"),
+        desc: t("set.autoImport.desc"),
+        control: { type: "toggle", key: "autoImport", defaultValue: DEFAULT_SETTINGS.autoImport }
+      },
+      {
+        name: t("set.fetchArticles"),
+        desc: t("set.fetchArticles.desc"),
+        control: { type: "toggle", key: "fetchArticles", defaultValue: DEFAULT_SETTINGS.fetchArticles }
+      },
+      {
+        name: t("set.notify"),
+        control: { type: "toggle", key: "notifyOnMessage", defaultValue: DEFAULT_SETTINGS.notifyOnMessage }
+      },
+      {
+        name: "",
+        searchable: false,
+        render: (setting) => {
+          setting.settingEl.createEl("p", { text: t("set.footer"), cls: "setting-item-description" });
+        }
+      },
+      // Where agents learn the outbox protocol: a note file maintained inside the vault
+      {
+        name: t("set.agentGuide"),
+        desc: t("set.agentGuide.desc", { path: `${this.plugin.settings.inboxFolder}/Agent.md` })
+      }
+    ];
   }
   /** Login-status section: shows the bound ID when logged in; inline QR code otherwise */
   renderLoginSection(containerEl) {
+    this.alive = true;
+    containerEl.empty();
     const st = this.plugin.getState();
     const section = containerEl.createDiv({ cls: "wechatian-login-section" });
     if (st?.token) {
@@ -1572,12 +1576,12 @@ var WechatianSettingTab = class extends import_obsidian4.PluginSettingTab {
           this.plugin.disconnect();
           this.plugin.clearCredentials();
           new import_obsidian4.Notice(t("notice.loggedOut"));
-          this.display();
+          this.update();
         })
       );
       let testInput = null;
       new import_obsidian4.Setting(section).setName(t("sendTest.name")).setDesc(t("sendTest.desc")).addText((txt) => {
-        txt.setPlaceholder("Hello, I'm Wechatian").setValue("Hello, I'm Wechatian");
+        txt.setPlaceholder("Type a message").setValue("Testing 123");
         txt.inputEl.addClass("wechatian-send-input");
         testInput = txt;
       }).addButton((b) => {
@@ -1628,7 +1632,7 @@ var WechatianSettingTab = class extends import_obsidian4.PluginSettingTab {
     if (out) {
       this.plugin.applyLogin(out);
       new import_obsidian4.Notice(t("notice.loggedIn"));
-      this.display();
+      this.update();
     }
   }
   /** Render the QR code into the given container (canvas + URL fallback text) */
@@ -1655,9 +1659,9 @@ var WechatianSettingTab = class extends import_obsidian4.PluginSettingTab {
         }
       }
     } catch {
-      el.createEl("div", { text: url });
+      el.createDiv({ text: url });
     }
-    el.createEl("div", { text: url, cls: "wechatian-qr-url" });
+    el.createDiv({ text: url, cls: "wechatian-qr-url" });
   }
 };
 

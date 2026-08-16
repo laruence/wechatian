@@ -5,12 +5,16 @@
   "scripts": {
     "build": "node esbuild.config.js",
     "watch": "node esbuild.config.js --watch",
+    "lint": "eslint src/",
     "smoke": "node scripts/smoke.js"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "@typescript-eslint/parser": "^8.67.0",
     "esbuild": "^0.25.0",
+    "eslint": "^9.39.5",
+    "eslint-plugin-obsidianmd": "^0.4.1",
     "obsidian": "^1.8.0",
-    "typescript": "^5.5.0"
+    "typescript": "^5.9.3"
   }
 }
