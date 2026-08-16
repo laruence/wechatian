@@ -1722,7 +1722,7 @@ var WechatianSettingTab = class extends import_obsidian4.PluginSettingTab {
       );
       let testInput = null;
       new import_obsidian4.Setting(section).setName(t("sendTest.name")).setDesc(t("sendTest.desc")).addText((txt) => {
-        txt.setPlaceholder(t("sendTest.placeholder")).setValue("Testing 123");
+        txt.setPlaceholder(t("sendTest.placeholder")).setValue("Hello from wechatian");
         txt.inputEl.addClass("wechatian-send-input");
         testInput = txt;
       }).addButton((b) => {

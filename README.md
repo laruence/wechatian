@@ -51,7 +51,8 @@ After every rebuild, reload the plugin in Obsidian (disable/enable it, or restar
 
 1. Open the Wechatian settings page — a QR code appears automatically
 2. Scan it with WeChat and confirm on your phone
-3. The status bar shows "WeChat online"; incoming messages now land in your inbox folder
+3. **Send any message to the bot from WeChat** — the gateway only hands out a send credential (context token) once the bound account has messaged the bot; without this step the bot cannot send yet
+4. The status bar shows "WeChat online"; incoming messages land in your inbox folder, and the plugin can now send back
 
 ## Directory layout
 
@@ -103,6 +104,7 @@ If you are an AI agent working in a vault with Wechatian installed:
 
 ## Good to know
 
+- **First send** — after scanning, message the bot once from WeChat to unlock sending (see Quick start step 3)
 - **Privacy** — the plugin talks to the WeChat ilink gateway directly; message content is stored only in your vault
 - **Rate limit** — the gateway rate-limits proactive sends; this channel is designed for notifications, not conversations
 - **One device per account** — concurrent long polling from multiple devices competes for the same message stream
@@ -137,6 +139,13 @@ node scripts/smoke.js sendfile <token> <to> <f>   # send an attachment
 - **发**:往 `outbox/` 丢文件——`.md` 作为文本消息发送,图片/视频/文档(≤100MB)作为附件发送;发送成功后记录进当天对话笔记,媒体在 `attachments/` 存副本
 - **对话记录**:每天的收与发写在同一份 `<日期>.md` 里,按时间排列、标记接收/发送,消息体在引用块中,是一份可读的双向记录
 
+### 快速上手
+
+1. 打开 Wechatian 设置页,二维码自动出现
+2. 用微信扫码,在手机上确认登录
+3. **从微信给 bot 发一条任意消息**——网关只在绑定账号给 bot 发过消息后才下发发送凭据(context token),少了这一步 bot 暂时发不出消息
+4. 状态栏显示"微信在线":收的消息进收件箱,bot 也具备了发送能力
+
 ### 常用场景
 
 - **任务完成微信通知**:agent 往 `outbox/` 写一个 `.md`(如"构建完成,0 错误"),一分钟后你微信收到,人不在电脑前也不漏事
@@ -154,7 +163,7 @@ node scripts/smoke.js sendfile <token> <to> <f>   # send an attachment
 
 ### 安装
 
-未上架社区插件商店,手动安装:release 里把 `main.js`、`manifest.json`、`styles.css` 拷进 `<vault>/.obsidian/plugins/wechatian/` 并在设置里启用;或源码构建(`OBSIDIAN_PLUGIN_DIR=<你的vault插件目录> npm run build` 指定目标)。每次重新构建后在 Obsidian 里重载插件。
+未上架社区插件商店,手动安装:release 里把 `main.js`、`manifest.json`、`styles.css` 拷进 `<vault>/.obsidian/plugins/wechatian/` 并在设置里启用;或源码构建(`OBSIDIAN_PLUGIN_DIR=<你的vault插件目录> npm run build` 指定目标)。每次重新构建后在 Obsidian 里重载插件。注意:首次扫码绑定后,需先从微信给 bot 发一条任意消息获取发送凭据(见"快速上手"第 3 步),否则 bot 暂时无法主动发送。
 
 ## License
 
