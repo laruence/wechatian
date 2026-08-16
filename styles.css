@@ -1,0 +1,32 @@
+/* QR code styling for the scan modal */
+.wechatian-qr canvas {
+  image-rendering: pixelated;
+  border: 8px solid #fff;
+  border-radius: 4px;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.15);
+}
+
+/* Login section on the settings page */
+.wechatian-login-section {
+  margin-bottom: 16px;
+}
+
+.wechatian-login-section .wechatian-qr {
+  display: flex;
+  justify-content: center;
+  margin: 12px 0;
+}
+
+.wechatian-qr-status {
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.wechatian-qr-url {
+  font-size: 11px;
+  color: var(--text-faint);
+  word-break: break-all;
+  max-width: 320px;
+  margin: 8px auto 0;
+  text-align: center;
+}

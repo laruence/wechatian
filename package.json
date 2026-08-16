@@ -1,0 +1,16 @@
+{
+  "name": "wechatian",
+  "version": "0.1.0",
+  "description": "Wechatian - WeChat inbox Obsidian plugin",
+  "scripts": {
+    "build": "node esbuild.config.js",
+    "watch": "node esbuild.config.js --watch",
+    "smoke": "node scripts/smoke.js"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "esbuild": "^0.25.0",
+    "obsidian": "^1.8.0",
+    "typescript": "^5.5.0"
+  }
+}
