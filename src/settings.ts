@@ -13,7 +13,6 @@ export interface WechatianSettings {
   attachmentFolder: string;
   articleFolder: string;
   outboxFolder: string; // outbox folder (agents drop pending-send files here)
-  sentFolder: string; // sent folder (copies of successfully sent messages)
   fetchArticles: boolean; // fetch link metadata and create article notes
   autoImport: boolean;
   notifyOnMessage: boolean;
@@ -26,13 +25,12 @@ export const DEFAULT_SETTINGS: WechatianSettings = {
   attachmentFolder: 'Wechatian/attachments',
   articleFolder: 'Wechatian/articles',
   outboxFolder: 'Wechatian/outbox',
-  sentFolder: 'Wechatian/sentbox',
   fetchArticles: true,
   autoImport: true,
   notifyOnMessage: true,
 };
 
-const FOLDER_KEYS = ['inboxFolder', 'attachmentFolder', 'articleFolder', 'outboxFolder', 'sentFolder'];
+const FOLDER_KEYS = ['inboxFolder', 'attachmentFolder', 'articleFolder', 'outboxFolder'];
 
 export class WechatianSettingTab extends PluginSettingTab {
   /** Liveness flag for the settings pane: aborts QR polling when switched away/closed */
@@ -103,11 +101,6 @@ export class WechatianSettingTab extends PluginSettingTab {
         control: { type: 'text', key: 'outboxFolder', defaultValue: DEFAULT_SETTINGS.outboxFolder },
       },
       {
-        name: t('set.sentFolder'),
-        desc: t('set.sentFolder.desc'),
-        control: { type: 'text', key: 'sentFolder', defaultValue: DEFAULT_SETTINGS.sentFolder },
-      },
-      {
         name: t('set.autoImport'),
         desc: t('set.autoImport.desc'),
         control: { type: 'toggle', key: 'autoImport', defaultValue: DEFAULT_SETTINGS.autoImport },
@@ -170,7 +163,7 @@ export class WechatianSettingTab extends PluginSettingTab {
         .setName(t('sendTest.name'))
         .setDesc(t('sendTest.desc'))
         .addText((txt) => {
-          txt.setPlaceholder('Type a message').setValue('Testing 123');
+          txt.setPlaceholder(t('sendTest.placeholder')).setValue('Testing 123');
           txt.inputEl.addClass('wechatian-send-input');
           testInput = txt;
         })
@@ -217,7 +210,7 @@ export class WechatianSettingTab extends PluginSettingTab {
         if (this.alive) statusEl.setText(t('login.scanned'));
       },
       onError: (msg) => {
-        if (this.alive) statusEl.setText(`⚠️ ${msg}`);
+        if (this.alive) statusEl.setText(msg);
       },
       cancelled: () => !this.alive,
     });

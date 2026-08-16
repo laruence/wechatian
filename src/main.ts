@@ -4,7 +4,7 @@ import { IlinkClient, type PollResult, sleep } from './core/ilink';
 import type { InboundMessage } from './core/types';
 import { ObsidianTransport } from './core/transport-obsidian';
 import { StateStore, type BotState } from './core/store';
-import { importMessage, ensureFolder, sentStamp, sanitizeFileName } from './core/importer';
+import { appendOutbound, ensureFolder, importMessage, quoteBlock, timeOfDay } from './core/importer';
 import { ensureAgentGuide } from './core/agent-guide';
 import type { LoginOutcome } from './core/qrlogin';
 import { DEFAULT_SETTINGS, WechatianSettings, WechatianSettingTab } from './settings';
@@ -74,13 +74,9 @@ export default class WechatianPlugin extends Plugin {
     const raw = (await this.loadData()) as Record<string, unknown> | null;
     if (raw && typeof raw === 'object') {
       delete raw.allowFrom; // legacy field: whitelist removed, only the scanning user is accepted
+      delete raw.sentFolder; // legacy field: sent copies now live in the daily conversation note
     }
     this.settings = Object.assign({}, DEFAULT_SETTINGS, raw ?? {});
-    // Legacy configs predate sentFolder: derive it from inboxFolder so it lands
-    // next to the user's existing Wechat directory instead of the new default
-    if (raw && typeof raw === 'object' && !('sentFolder' in raw)) {
-      this.settings.sentFolder = `${this.settings.inboxFolder}/sentbox`;
-    }
   }
 
   async saveSettings(): Promise<void> {
@@ -103,7 +99,7 @@ export default class WechatianPlugin extends Plugin {
   /** Create the whole Wechat directory tree + Agent.md once the plugin is enabled */
   private async ensureFolders(): Promise<void> {
     const s = this.settings;
-    for (const folder of [s.inboxFolder, s.attachmentFolder, s.articleFolder, s.outboxFolder, s.sentFolder]) {
+    for (const folder of [s.inboxFolder, s.attachmentFolder, s.articleFolder, s.outboxFolder]) {
       try {
         await ensureFolder(this.app, folder);
       } catch {
@@ -111,17 +107,6 @@ export default class WechatianPlugin extends Plugin {
       }
     }
     await ensureAgentGuide(this.app, s, resolvedLanguage());
-  }
-
-  /** Archive a successfully sent text message into the sent folder */
-  async archiveSent(text: string, source: 'test' | 'outbox'): Promise<void> {
-    const path = `${this.settings.sentFolder}/${sentStamp(Date.now())}_${source}_${sanitizeFileName(text.slice(0, 20)) || 'message'}.md`;
-    try {
-      await ensureFolder(this.app, this.settings.sentFolder);
-      await this.app.vault.adapter.write(path, `${text.trim()}\n`);
-    } catch {
-      /* archiving is best-effort; the send itself already succeeded */
-    }
   }
 
   /** Directory settings changed: re-sync Agent.md with the new paths */
@@ -257,7 +242,14 @@ export default class WechatianPlugin extends Plugin {
     if (!to || !st.token.trim()) return { ok: false, errmsg: t('sendTest.notBound') };
     const client = this.client ?? this.makeClient();
     const res = await client.sendText(to, text, st.contextTokens[to] ?? '');
-    if (res.ok) await this.archiveSent(text, 'test');
+    if (res.ok) {
+      const now = Date.now();
+      await appendOutbound(this.app, this.settings.inboxFolder, now, to, [
+        `**${timeOfDay(now)}** · ${t('importer.sent')}`,
+        '',
+        ...quoteBlock(text),
+      ]);
+    }
     return { ok: res.ok, errmsg: res.errmsg.trim() || res.raw || '' };
   }
 
@@ -335,7 +327,13 @@ export default class WechatianPlugin extends Plugin {
 
       // Consume the outbox (pending-send files written by agents)
       try {
-        await this.outbox?.flush(this.client, store, this.settings.outboxFolder, this.settings.sentFolder);
+        await this.outbox?.flush(
+          this.client,
+          store,
+          this.settings.outboxFolder,
+          this.settings.inboxFolder,
+          this.settings.attachmentFolder,
+        );
       } catch {
         /* send failures must not block polling */
       }

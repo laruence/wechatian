@@ -1,9 +1,9 @@
-/** Import messages into the vault: daily inbox + attachment storage + article notes */
+/** Import messages into the vault: daily conversation note + attachment storage + article notes */
 import type { App } from 'obsidian';
 import { TFolder } from 'obsidian';
 import type { InboundMessage } from './types';
 import type { HttpTransport } from './http';
-import { extractLinks, fetchArticleInfo } from './article';
+import { extractLinks, fetchArticle } from './article';
 import { t } from '../i18n';
 
 export interface ImportSettings {
@@ -30,12 +30,6 @@ export function dayStamp(ts: number): string {
 export function timeOfDay(ts: number): string {
   const d = new Date(ts);
   return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
-/** Compact timestamp for sent-archive file names: 2026-08-16_1530 */
-export function sentStamp(ts: number): string {
-  const d = new Date(ts);
-  return `${dayStamp(ts)}_${pad(d.getHours())}${pad(d.getMinutes())}`;
 }
 
 /** Replace characters that are invalid in file names */
@@ -71,13 +65,64 @@ export async function importMessage(
   await ensureFolder(app, settings.articleFolder);
 
   const lines: string[] = [];
-  lines.push(`**${timeOfDay(msg.timeMs)}**`);
-  if (msg.text.trim()) {
-    lines.push('');
-    lines.push(msg.text.trim());
-  }
+  lines.push(`**${timeOfDay(msg.timeMs)}** · ${t('importer.received')}`);
 
-  // store attachments
+  // links -> full article notes first, so the body shows the title link instead of the raw URL
+  const links = extractLinks(msg.text);
+  let display = msg.text.trim();
+  if (settings.fetchArticles && links.length) {
+    for (const url of links.slice(0, 5)) {
+      const info = await fetchArticle(transport, url);
+      if (!info) continue; // fetch failed: the raw URL stays in the body
+      const title = info.title;
+      const notePath = `${settings.articleFolder}/${dayStamp(msg.timeMs)} ${sanitizeFileName(title)}.md`;
+      try {
+        if (!(await app.vault.adapter.exists(notePath))) {
+          // store downloaded images next to the other media, then resolve placeholders
+          const base = `${dayStamp(msg.timeMs)}_${timeOfDay(msg.timeMs).replace(':', '')}`;
+          let body = info.markdown;
+          for (let i = 0; i < info.images.length; i++) {
+            const img = info.images[i];
+            const ph = `![[img:${i}]]`;
+            if (img.data) {
+              const path = `${settings.attachmentFolder}/${base}_article${i}.${img.ext}`;
+              try {
+                const ab = img.data.buffer.slice(
+                  img.data.byteOffset,
+                  img.data.byteOffset + img.data.byteLength,
+                ) as ArrayBuffer;
+                await app.vault.adapter.writeBinary(path, ab);
+                body = body.split(ph).join(`![[${path}]]`);
+                continue;
+              } catch {
+                /* fall through to a remote link */
+              }
+            }
+            body = body.split(ph).join(`![image](${img.url})`);
+          }
+          const note = [
+            `# ${title}`,
+            '',
+            `> **${t('importer.source')}**: ${url}`,
+            `> **${t('importer.imported')}**: ${new Date(msg.timeMs).toLocaleString()}`,
+            `> **${t('importer.from')}**: ${msg.from}`,
+            info.description ? `> **${t('importer.summary')}**: ${info.description}` : '',
+            '',
+            body,
+            '',
+          ].join('\n');
+          await app.vault.create(notePath, note);
+          result.articleNotes.push(notePath);
+        }
+        display = display.split(url).join(`[[${notePath.replace(/\.md$/, '')}|${title}]]`);
+      } catch {
+        /* a failed article note must not break the inbox entry */
+      }
+    }
+  }
+  if (display) lines.push('', ...quoteBlock(display));
+
+  // store attachments (rendered inline, inside the quote)
   for (const att of msg.attachments) {
     let ext = att.name.includes('.') ? att.name.split('.').pop() : '';
     if (att.kind === 'image') ext = ext && ext !== 'bin' ? ext : 'jpg';
@@ -87,61 +132,42 @@ export async function importMessage(
       // writeBinary needs an ArrayBuffer; slice out the exact region from the Uint8Array view
       const ab = att.data.buffer.slice(att.data.byteOffset, att.data.byteOffset + att.data.byteLength) as ArrayBuffer;
       await app.vault.adapter.writeBinary(path, ab);
-      const rel = path;
-      if (att.kind === 'image') {
-        lines.push('');
-        lines.push(`![[${rel}]]`);
-      } else {
-        lines.push('');
-        lines.push(`[[${rel}|${att.name}]]`);
-      }
+      const embed = att.kind === 'image' ? `![[${path}]]` : `[[${path}|${att.name}]]`;
+      lines.push('', ...quoteBlock(embed));
     } catch {
-      lines.push('');
-      lines.push(`> ${t('importer.attachFailed', { name: att.name })}`);
+      lines.push('', ...quoteBlock(t('importer.attachFailed', { name: att.name })));
     }
   }
 
-  // links -> article notes
-  const links = extractLinks(msg.text);
-  if (settings.fetchArticles && links.length) {
-    for (const url of links.slice(0, 5)) {
-      const info = await fetchArticleInfo(transport, url);
-      const title = info?.title || url;
-      const notePath = `${settings.articleFolder}/${dayStamp(msg.timeMs)} ${sanitizeFileName(title)}.md`;
-      try {
-        if (!(await app.vault.adapter.exists(notePath))) {
-          const body = [
-            `# ${title}`,
-            '',
-            `> **${t('importer.source')}**: ${url}`,
-            `> **${t('importer.imported')}**: ${new Date(msg.timeMs).toLocaleString()}`,
-            `> **${t('importer.from')}**: ${msg.from}`,
-            info?.description ? `> **${t('importer.summary')}**: ${info.description}` : '',
-            '',
-          ].join('\n');
-          await app.vault.create(notePath, body);
-          result.articleNotes.push(notePath);
-        }
-        lines.push('');
-        lines.push(`[[${notePath.replace(/\.md$/, '')}|${title}]]`);
-      } catch {
-        /* a failed article note must not break the inbox entry */
-      }
-    }
-  }
+  // append to today's conversation note (sender goes in frontmatter so agents can look up the recipient ID)
+  result.appended = await appendDaily(app, settings.inboxFolder, msg.timeMs, msg.from, lines);
+  return result;
+}
 
-  // append to today's inbox (sender goes in frontmatter so agents can look up the recipient ID)
-  const dailyPath = `${settings.inboxFolder}/${dayStamp(msg.timeMs)}.md`;
-  const header = `---\ndate: ${dayStamp(msg.timeMs)}\nsender: ${msg.from}\n---\n\n# ${t('importer.inboxTitle', { date: dayStamp(msg.timeMs) })}\n\n`;
+/** Wrap a message body as a markdown quote block so entries read as distinct bubbles */
+export function quoteBlock(text: string): string[] {
+  return text
+    .trim()
+    .split('\n')
+    .map((l) => `> ${l}`);
+}
+
+/** Append one block to the daily conversation note; creates it with a header when missing */
+async function appendDaily(app: App, inboxFolder: string, timeMs: number, sender: string, lines: string[]): Promise<boolean> {
+  const dailyPath = `${inboxFolder}/${dayStamp(timeMs)}.md`;
+  const header = `---\ndate: ${dayStamp(timeMs)}\nsender: ${sender}\n---\n\n# ${t('importer.inboxTitle', { date: dayStamp(timeMs) })}\n\n`;
   const block = lines.join('\n') + '\n\n';
   try {
     const exists = await app.vault.adapter.exists(dailyPath);
     const prev = exists ? await app.vault.adapter.read(dailyPath) : header;
     await app.vault.adapter.write(dailyPath, prev + block);
-    result.appended = true;
+    return true;
   } catch {
-    /* ignore */
+    return false;
   }
+}
 
-  return result;
+/** Record a successful outbound send in the daily conversation note (media links its attachment copy) */
+export async function appendOutbound(app: App, inboxFolder: string, timeMs: number, sender: string, lines: string[]): Promise<void> {
+  await appendDaily(app, inboxFolder, timeMs, sender, lines);
 }

@@ -37,6 +37,17 @@ var HttpError = class extends Error {
 function bodyText(r) {
   return Buffer.from(r.body).toString("utf8");
 }
+async function bodyTextAuto(r) {
+  const bytes = new Uint8Array(r.body);
+  if (bytes.length > 2 && bytes[0] === 31 && bytes[1] === 139) {
+    try {
+      const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"));
+      return await new Response(stream).text();
+    } catch {
+    }
+  }
+  return Buffer.from(r.body).toString("utf8");
+}
 function bodyJson(r) {
   return JSON.parse(bodyText(r));
 }
@@ -564,6 +575,7 @@ var StateStore = class {
 var import_obsidian3 = require("obsidian");
 
 // src/core/article.ts
+var UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36";
 function extractLinks(text) {
   const out = [];
   const re = /https?:\/\/[^\s<>"'，。、）》]+/g;
@@ -573,43 +585,157 @@ function extractLinks(text) {
   }
   return out;
 }
-async function fetchArticleInfo(transport, url) {
+async function fetchArticle(transport, url) {
   try {
     const resp = await transport.get(
       url,
       {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
-        Accept: "text/html,application/xhtml+xml"
+        "User-Agent": UA,
+        Accept: "text/html,application/xhtml+xml",
+        // ask for an uncompressed body; bodyTextAuto gunzips as a fallback
+        "Accept-Encoding": "identity"
       },
       2e4
     );
     if (resp.status !== 200) return null;
-    const html = bodyText(resp);
-    const title = ogTag(html, "og:title") || titleTag(html);
-    const description = ogTag(html, "og:description") || metaTag(html, "description");
-    if (!title) return null;
-    return { url, title: cleanText(title), description: cleanText(description) };
+    const html = await bodyTextAuto(resp);
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    const title = doc.querySelector('meta[property="og:title"]')?.getAttribute("content") ?? doc.title ?? "";
+    if (!title.trim()) return null;
+    const description = doc.querySelector('meta[property="og:description"]')?.getAttribute("content") ?? doc.querySelector('meta[name="description"]')?.getAttribute("content") ?? "";
+    const root = doc.querySelector("#js_content") ?? doc.body;
+    const images = [];
+    const markdown = normalizeBlocks(toMd(root, images));
+    await downloadImages(transport, images);
+    return { url, title: cleanText(title), description: cleanText(description), markdown, images };
   } catch {
     return null;
   }
 }
-function ogTag(html, prop) {
-  const m = html.match(new RegExp(`<meta[^>]+property=["']${prop}["'][^>]+content=["']([^"']*)["']`, "i")) ?? html.match(new RegExp(`<meta[^>]+content=["']([^"']*)["'][^>]+property=["']${prop}["']`, "i"));
-  return m ? decodeEntities(m[1]) : "";
+async function downloadImages(transport, images) {
+  for (const img of images) {
+    for (let attempt = 0; attempt < 2 && !img.data; attempt++) {
+      if (attempt > 0) await sleep2(1500);
+      try {
+        const resp = await transport.get(img.url, { "User-Agent": UA }, 2e4);
+        if (resp.status === 200) {
+          img.data = new Uint8Array(resp.body);
+        } else {
+          console.warn(`wechatian: article image HTTP ${resp.status}: ${img.url}`);
+        }
+      } catch (e) {
+        console.warn(`wechatian: article image download failed: ${String(e?.message ?? e)}`, img.url);
+      }
+    }
+    await sleep2(400);
+  }
 }
-function metaTag(html, name) {
-  const m = html.match(new RegExp(`<meta[^>]+name=["']${name}["'][^>]+content=["']([^"']*)["']`, "i"));
-  return m ? decodeEntities(m[1]) : "";
+function sleep2(ms) {
+  return new Promise((r) => window.setTimeout(r, ms));
 }
-function titleTag(html) {
-  const m = html.match(/<title[^>]*>([^<]*)<\/title>/i);
-  return m ? decodeEntities(m[1]) : "";
+var BLOCK_TAGS = /* @__PURE__ */ new Set([
+  "p",
+  "div",
+  "section",
+  "article",
+  "figure",
+  "figcaption",
+  "ul",
+  "ol",
+  "table",
+  "pre",
+  "hr"
+]);
+function toMd(node, images) {
+  if (node.nodeType === 3) return collapseWs(node.textContent ?? "");
+  if (node.nodeType !== 1) return "";
+  const el = node;
+  const tag = el.tagName.toLowerCase();
+  const inner = () => Array.from(el.childNodes).map((n) => toMd(n, images)).join("");
+  switch (tag) {
+    case "img": {
+      const src = el.getAttribute("data-src") ?? el.getAttribute("src") ?? "";
+      if (!src || src.startsWith("data:")) return "";
+      if (images.length >= 10) {
+        console.warn(`wechatian: article image cap (10) reached, keeping remote link: ${src}`);
+        return `![image](${src})`;
+      }
+      images.push({ url: src, ext: imageExt(src), data: null });
+      return ` ![[img:${images.length - 1}]] `;
+    }
+    case "br":
+      return "\n";
+    case "strong":
+    case "b":
+      return `**${inner()}**`;
+    case "em":
+    case "i":
+      return `*${inner()}*`;
+    case "code":
+      return `\`${(el.textContent ?? "").trim()}\``;
+    case "a": {
+      const href = el.getAttribute("href") ?? "";
+      const text = cleanText(inner());
+      return href.startsWith("http") && text ? `[${text}](${href})` : text;
+    }
+    case "h1":
+    case "h2":
+    case "h3":
+    case "h4":
+    case "h5":
+    case "h6": {
+      const level = Number(tag[1]);
+      return `
+
+${"#".repeat(level)} ${cleanText(inner())}
+
+`;
+    }
+    case "li":
+      return `
+- ${cleanText(inner())}`;
+    case "blockquote":
+      return `
+
+> ${cleanText(inner())}
+
+`;
+    case "pre":
+      return `
+
+\`\`\`
+${(el.textContent ?? "").trim()}
+\`\`\`
+
+`;
+    case "script":
+    case "style":
+    case "svg":
+      return "";
+    default:
+      if (BLOCK_TAGS.has(tag)) return `
+
+${inner()}
+
+`;
+      return inner();
+  }
 }
-function decodeEntities(s) {
-  return s.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&nbsp;/g, " ");
+function normalizeBlocks(md) {
+  return md.replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+function collapseWs(s) {
+  return s.replace(/\s+/g, " ");
 }
 function cleanText(s) {
   return s.replace(/\s+/g, " ").trim();
+}
+function imageExt(src) {
+  const fmt = /[?&]wx_fmt=([a-z]+)/i.exec(src)?.[1];
+  if (fmt) return fmt.toLowerCase() === "jpeg" ? "jpg" : fmt.toLowerCase();
+  const m = /\.([a-z0-9]+)(?:[?#]|$)/i.exec(src.split("/").pop() ?? "");
+  const ext = m?.[1]?.toLowerCase() ?? "";
+  return ["jpg", "jpeg", "png", "gif", "webp"].includes(ext) ? ext : "jpg";
 }
 
 // src/i18n.ts
@@ -628,11 +754,11 @@ var en = {
   "notice.noMsgToday": "No messages today ({{path}})",
   "notice.prefix": "WeChat",
   "notice.attachments": "{{n}} attachment(s)",
-  "status.disconnected": "\u{1F4F4} disconnected",
-  "status.connecting": "\u23F3 connecting",
-  "status.connected": "\u{1F7E2} WeChat online",
-  "status.expired": "\u26A0\uFE0F session expired",
-  "status.error": "\u{1F534} connection error",
+  "status.disconnected": "disconnected",
+  "status.connecting": "connecting",
+  "status.connected": "WeChat online",
+  "status.expired": "session expired",
+  "status.error": "connection error",
   "set.language": "Language",
   "set.language.desc": "Interface language for settings, commands, and notifications",
   "set.language.system": "Follow Obsidian",
@@ -646,28 +772,28 @@ var en = {
   "set.articleFolder.desc": "Folder for official-account/web article notes",
   "set.outboxFolder": "Outbox folder",
   "set.outboxFolder.desc": "A one-to-one channel to yourself: an agent writes files here \u2014 .md sends its content as text, images/videos/documents are sent as attachments \u2014 each file is deleted after a successful send",
-  "set.sentFolder": "Sent folder",
-  "set.sentFolder.desc": "Copies of successfully sent messages (test sends and outbox sends) are archived here",
   "set.autoImport": "Auto-import messages",
   "set.autoImport.desc": "Write messages into the inbox as soon as they arrive",
   "set.fetchArticles": "Fetch article info",
   "set.fetchArticles.desc": "Automatically fetch the title/summary of links in messages and create article notes",
   "set.notify": "Notify on message",
-  "set.footer": "Note: this plugin talks to the WeChat ilink gateway directly; messages are stored only in this vault. Sending is rate-limited by the gateway (roughly 4-6 proactive messages per day).",
+  "set.footer": "Note: this plugin talks to the WeChat ilink gateway directly; messages are stored only in this vault. Proactive sends are rate-limited by the gateway.",
   "login.status": "Login status",
-  "login.bound": "\u2705 Bound \xB7 bot {{bot}} \xB7 scanning user {{user}}",
+  "login.bound": "Bound \xB7 bot {{bot}} \xB7 scanning user {{user}}",
   "login.rescan": "Re-scan",
   "login.logout": "Log out",
   "login.notLoggedIn": "Not logged in to WeChat yet. Scan the QR code below to bind:",
   "login.fetching": "Fetching QR code\u2026",
   "login.waiting": "Waiting for scan\u2026",
   "login.scanned": "Scanned \u2014 please confirm on your phone\u2026",
-  "login.success": "\u2705 Logged in",
+  "login.success": "Logged in",
   "modal.title": "WeChat Scan Login",
   "modal.hint": "Scan the QR code below with WeChat, then confirm login on your phone.",
   "modal.renderFailed": "Failed to render QR code: {{err}}",
   "modal.openLink": "or tap this link to open on your phone",
   "importer.attachFailed": "Failed to save attachment: {{name}}",
+  "importer.received": "received",
+  "importer.sent": "sent",
   "importer.source": "Source",
   "importer.imported": "Imported",
   "importer.from": "From",
@@ -683,7 +809,8 @@ var en = {
   "sendTest.name": "Test send",
   "sendTest.desc": "Sends to your own bound WeChat account (one-to-one channel)",
   "sendTest.send": "Send",
-  "sendTest.ok": "\u2705 Message sent",
+  "sendTest.placeholder": "Type a message",
+  "sendTest.ok": "Message sent",
   "sendTest.empty": "Nothing to send",
   "sendTest.failed": "Send failed: {{err}}",
   "sendTest.notBound": "Not logged in yet",
@@ -705,11 +832,11 @@ var zh = {
   "notice.noMsgToday": "\u4ECA\u65E5\u6682\u65E0\u6D88\u606F({{path}})",
   "notice.prefix": "\u5FAE\u4FE1",
   "notice.attachments": "{{n}} \u4E2A\u9644\u4EF6",
-  "status.disconnected": "\u{1F4F4} \u672A\u8FDE\u63A5",
-  "status.connecting": "\u23F3 \u8FDE\u63A5\u4E2D",
-  "status.connected": "\u{1F7E2} \u5FAE\u4FE1\u5728\u7EBF",
-  "status.expired": "\u26A0\uFE0F \u4F1A\u8BDD\u8FC7\u671F",
-  "status.error": "\u{1F534} \u8FDE\u63A5\u9519\u8BEF",
+  "status.disconnected": "\u672A\u8FDE\u63A5",
+  "status.connecting": "\u8FDE\u63A5\u4E2D",
+  "status.connected": "\u5FAE\u4FE1\u5728\u7EBF",
+  "status.expired": "\u4F1A\u8BDD\u8FC7\u671F",
+  "status.error": "\u8FDE\u63A5\u9519\u8BEF",
   "set.language": "\u8BED\u8A00",
   "set.language.desc": "\u8BBE\u7F6E\u9875\u3001\u547D\u4EE4\u4E0E\u901A\u77E5\u7684\u754C\u9762\u8BED\u8A00",
   "set.language.system": "\u8DDF\u968F Obsidian",
@@ -723,28 +850,28 @@ var zh = {
   "set.articleFolder.desc": "\u516C\u4F17\u53F7/\u7F51\u9875\u6587\u7AE0\u7B14\u8BB0\u5B58\u653E\u76EE\u5F55",
   "set.outboxFolder": "\u53D1\u4EF6\u7BB1\u76EE\u5F55",
   "set.outboxFolder.desc": "\u7ED9\u81EA\u5DF1\u7684\u5355\u5411\u901A\u9053:agent \u5728\u6B64\u5199\u5165\u6587\u4EF6,.md \u4F5C\u4E3A\u6587\u672C\u6D88\u606F\u53D1\u9001,\u56FE\u7247/\u89C6\u9891/\u6587\u6863\u4F5C\u4E3A\u9644\u4EF6\u53D1\u9001,\u53D1\u9001\u6210\u529F\u540E\u5220\u9664\u6587\u4EF6",
-  "set.sentFolder": "\u5DF2\u53D1\u9001\u76EE\u5F55",
-  "set.sentFolder.desc": "\u53D1\u9001\u6210\u529F\u7684\u6D88\u606F\u526F\u672C(\u6D4B\u8BD5\u53D1\u9001\u4E0E\u53D1\u4EF6\u7BB1\u53D1\u9001)\u5B58\u6863\u5728\u6B64",
   "set.autoImport": "\u81EA\u52A8\u5BFC\u5165\u6D88\u606F",
   "set.autoImport.desc": "\u6536\u5230\u6D88\u606F\u540E\u7ACB\u5373\u5199\u5165\u6536\u4EF6\u7BB1",
   "set.fetchArticles": "\u6293\u53D6\u6587\u7AE0\u4FE1\u606F",
   "set.fetchArticles.desc": "\u6D88\u606F\u91CC\u7684\u94FE\u63A5\u81EA\u52A8\u6293\u53D6\u6807\u9898/\u6458\u8981\u5E76\u5EFA\u7ACB\u6587\u7AE0\u7B14\u8BB0",
   "set.notify": "\u6765\u6D88\u606F\u65F6\u901A\u77E5",
-  "set.footer": "\u8BF4\u660E:\u672C\u63D2\u4EF6\u76F4\u63A5\u4E0E\u5FAE\u4FE1 ilink \u7F51\u5173\u901A\u4FE1,\u6D88\u606F\u4EC5\u4FDD\u5B58\u5728\u672C vault\u3002\u53D1\u9001\u53D7\u7F51\u5173\u9650\u6D41(\u7EA6\u6BCF\u5929 4-6 \u6761\u4E3B\u52A8\u6D88\u606F)\u3002",
+  "set.footer": "\u8BF4\u660E:\u672C\u63D2\u4EF6\u76F4\u63A5\u4E0E\u5FAE\u4FE1 ilink \u7F51\u5173\u901A\u4FE1,\u6D88\u606F\u4EC5\u4FDD\u5B58\u5728\u672C vault\u3002\u4E3B\u52A8\u53D1\u9001\u53D7\u7F51\u5173\u9650\u6D41\u3002",
   "login.status": "\u767B\u5F55\u72B6\u6001",
-  "login.bound": "\u2705 \u5DF2\u7ED1\u5B9A \xB7 \u673A\u5668\u4EBA {{bot}} \xB7 \u626B\u7801\u7528\u6237 {{user}}",
+  "login.bound": "\u5DF2\u7ED1\u5B9A \xB7 \u673A\u5668\u4EBA {{bot}} \xB7 \u626B\u7801\u7528\u6237 {{user}}",
   "login.rescan": "\u91CD\u65B0\u626B\u7801",
   "login.logout": "\u9000\u51FA\u767B\u5F55",
   "login.notLoggedIn": "\u5C1A\u672A\u767B\u5F55\u5FAE\u4FE1\u3002\u626B\u63CF\u4E0B\u65B9\u4E8C\u7EF4\u7801\u7ED1\u5B9A:",
   "login.fetching": "\u6B63\u5728\u83B7\u53D6\u4E8C\u7EF4\u7801\u2026",
   "login.waiting": "\u7B49\u5F85\u626B\u7801\u2026",
   "login.scanned": "\u5DF2\u626B\u7801,\u8BF7\u5728\u624B\u673A\u4E0A\u786E\u8BA4\u2026",
-  "login.success": "\u2705 \u767B\u5F55\u6210\u529F",
+  "login.success": "\u767B\u5F55\u6210\u529F",
   "modal.title": "\u5FAE\u4FE1\u626B\u7801\u767B\u5F55",
   "modal.hint": "\u7528\u5FAE\u4FE1\u626B\u63CF\u4E0B\u65B9\u4E8C\u7EF4\u7801,\u7136\u540E\u5728\u624B\u673A\u4E0A\u786E\u8BA4\u767B\u5F55\u3002",
   "modal.renderFailed": "\u4E8C\u7EF4\u7801\u6E32\u67D3\u5931\u8D25: {{err}}",
   "modal.openLink": "\u6216\u70B9\u51FB\u6B64\u94FE\u63A5\u5728\u624B\u673A\u6253\u5F00",
   "importer.attachFailed": "\u9644\u4EF6\u4FDD\u5B58\u5931\u8D25: {{name}}",
+  "importer.received": "\u63A5\u6536",
+  "importer.sent": "\u53D1\u9001",
   "importer.source": "\u6765\u6E90",
   "importer.imported": "\u6536\u5F55\u65F6\u95F4",
   "importer.from": "\u53D1\u9001\u8005",
@@ -760,7 +887,8 @@ var zh = {
   "sendTest.name": "\u6D4B\u8BD5\u53D1\u9001",
   "sendTest.desc": "\u53D1\u9001\u5230\u4F60\u7ED1\u5B9A\u7684\u5FAE\u4FE1(\u4E00\u5BF9\u4E00\u901A\u9053,\u6536\u4EF6\u4EBA\u5C31\u662F\u4F60\u81EA\u5DF1)",
   "sendTest.send": "\u53D1\u9001",
-  "sendTest.ok": "\u2705 \u6D88\u606F\u5DF2\u53D1\u9001",
+  "sendTest.placeholder": "\u8F93\u5165\u8981\u53D1\u9001\u7684\u5185\u5BB9",
+  "sendTest.ok": "\u6D88\u606F\u5DF2\u53D1\u9001",
   "sendTest.empty": "\u5185\u5BB9\u4E3A\u7A7A,\u6CA1\u6709\u53EF\u53D1\u9001\u7684\u6D88\u606F",
   "sendTest.failed": "\u53D1\u9001\u5931\u8D25: {{err}}",
   "sendTest.notBound": "\u5C1A\u672A\u767B\u5F55",
@@ -804,10 +932,6 @@ function timeOfDay(ts) {
   const d = new Date(ts);
   return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
-function sentStamp(ts) {
-  const d = new Date(ts);
-  return `${dayStamp(ts)}_${pad(d.getHours())}${pad(d.getMinutes())}`;
-}
 function sanitizeFileName(name) {
   return name.replace(/[\\/:*?"<>|#^[\]]/g, "_").trim() || "untitled";
 }
@@ -830,11 +954,57 @@ async function importMessage(app, transport, msg, settings) {
   await ensureFolder(app, settings.attachmentFolder);
   await ensureFolder(app, settings.articleFolder);
   const lines = [];
-  lines.push(`**${timeOfDay(msg.timeMs)}**`);
-  if (msg.text.trim()) {
-    lines.push("");
-    lines.push(msg.text.trim());
+  lines.push(`**${timeOfDay(msg.timeMs)}** \xB7 ${t("importer.received")}`);
+  const links = extractLinks(msg.text);
+  let display = msg.text.trim();
+  if (settings.fetchArticles && links.length) {
+    for (const url of links.slice(0, 5)) {
+      const info = await fetchArticle(transport, url);
+      if (!info) continue;
+      const title = info.title;
+      const notePath = `${settings.articleFolder}/${dayStamp(msg.timeMs)} ${sanitizeFileName(title)}.md`;
+      try {
+        if (!await app.vault.adapter.exists(notePath)) {
+          const base = `${dayStamp(msg.timeMs)}_${timeOfDay(msg.timeMs).replace(":", "")}`;
+          let body = info.markdown;
+          for (let i = 0; i < info.images.length; i++) {
+            const img = info.images[i];
+            const ph = `![[img:${i}]]`;
+            if (img.data) {
+              const path = `${settings.attachmentFolder}/${base}_article${i}.${img.ext}`;
+              try {
+                const ab = img.data.buffer.slice(
+                  img.data.byteOffset,
+                  img.data.byteOffset + img.data.byteLength
+                );
+                await app.vault.adapter.writeBinary(path, ab);
+                body = body.split(ph).join(`![[${path}]]`);
+                continue;
+              } catch {
+              }
+            }
+            body = body.split(ph).join(`![image](${img.url})`);
+          }
+          const note = [
+            `# ${title}`,
+            "",
+            `> **${t("importer.source")}**: ${url}`,
+            `> **${t("importer.imported")}**: ${new Date(msg.timeMs).toLocaleString()}`,
+            `> **${t("importer.from")}**: ${msg.from}`,
+            info.description ? `> **${t("importer.summary")}**: ${info.description}` : "",
+            "",
+            body,
+            ""
+          ].join("\n");
+          await app.vault.create(notePath, note);
+          result.articleNotes.push(notePath);
+        }
+        display = display.split(url).join(`[[${notePath.replace(/\.md$/, "")}|${title}]]`);
+      } catch {
+      }
+    }
   }
+  if (display) lines.push("", ...quoteBlock(display));
   for (const att of msg.attachments) {
     let ext = att.name.includes(".") ? att.name.split(".").pop() : "";
     if (att.kind === "image") ext = ext && ext !== "bin" ? ext : "jpg";
@@ -843,52 +1013,26 @@ async function importMessage(app, transport, msg, settings) {
     try {
       const ab = att.data.buffer.slice(att.data.byteOffset, att.data.byteOffset + att.data.byteLength);
       await app.vault.adapter.writeBinary(path, ab);
-      const rel = path;
-      if (att.kind === "image") {
-        lines.push("");
-        lines.push(`![[${rel}]]`);
-      } else {
-        lines.push("");
-        lines.push(`[[${rel}|${att.name}]]`);
-      }
+      const embed = att.kind === "image" ? `![[${path}]]` : `[[${path}|${att.name}]]`;
+      lines.push("", ...quoteBlock(embed));
     } catch {
-      lines.push("");
-      lines.push(`> ${t("importer.attachFailed", { name: att.name })}`);
+      lines.push("", ...quoteBlock(t("importer.attachFailed", { name: att.name })));
     }
   }
-  const links = extractLinks(msg.text);
-  if (settings.fetchArticles && links.length) {
-    for (const url of links.slice(0, 5)) {
-      const info = await fetchArticleInfo(transport, url);
-      const title = info?.title || url;
-      const notePath = `${settings.articleFolder}/${dayStamp(msg.timeMs)} ${sanitizeFileName(title)}.md`;
-      try {
-        if (!await app.vault.adapter.exists(notePath)) {
-          const body = [
-            `# ${title}`,
-            "",
-            `> **${t("importer.source")}**: ${url}`,
-            `> **${t("importer.imported")}**: ${new Date(msg.timeMs).toLocaleString()}`,
-            `> **${t("importer.from")}**: ${msg.from}`,
-            info?.description ? `> **${t("importer.summary")}**: ${info.description}` : "",
-            ""
-          ].join("\n");
-          await app.vault.create(notePath, body);
-          result.articleNotes.push(notePath);
-        }
-        lines.push("");
-        lines.push(`[[${notePath.replace(/\.md$/, "")}|${title}]]`);
-      } catch {
-      }
-    }
-  }
-  const dailyPath = `${settings.inboxFolder}/${dayStamp(msg.timeMs)}.md`;
+  result.appended = await appendDaily(app, settings.inboxFolder, msg.timeMs, msg.from, lines);
+  return result;
+}
+function quoteBlock(text) {
+  return text.trim().split("\n").map((l) => `> ${l}`);
+}
+async function appendDaily(app, inboxFolder, timeMs, sender, lines) {
+  const dailyPath = `${inboxFolder}/${dayStamp(timeMs)}.md`;
   const header = `---
-date: ${dayStamp(msg.timeMs)}
-sender: ${msg.from}
+date: ${dayStamp(timeMs)}
+sender: ${sender}
 ---
 
-# ${t("importer.inboxTitle", { date: dayStamp(msg.timeMs) })}
+# ${t("importer.inboxTitle", { date: dayStamp(timeMs) })}
 
 `;
   const block = lines.join("\n") + "\n\n";
@@ -896,10 +1040,13 @@ sender: ${msg.from}
     const exists = await app.vault.adapter.exists(dailyPath);
     const prev = exists ? await app.vault.adapter.read(dailyPath) : header;
     await app.vault.adapter.write(dailyPath, prev + block);
-    result.appended = true;
+    return true;
   } catch {
+    return false;
   }
-  return result;
+}
+async function appendOutbound(app, inboxFolder, timeMs, sender, lines) {
+  await appendDaily(app, inboxFolder, timeMs, sender, lines);
 }
 
 // src/core/agent-guide.ts
@@ -910,7 +1057,7 @@ function agentGuideMeta(content) {
   return { lang, paths };
 }
 function pathsKey(s) {
-  return [s.inboxFolder, s.outboxFolder, s.sentFolder, s.attachmentFolder].join("|");
+  return [s.inboxFolder, s.outboxFolder, s.attachmentFolder].join("|");
 }
 function buildEn(s) {
   return `---
@@ -929,15 +1076,15 @@ Write a file into the outbox folder \`${s.outboxFolder}/\`:
 - \`.md\` file: the content is sent as a text message (the file name carries no meaning)
 - Image (\`.jpg/.png/.gif/.webp\`), video (\`.mp4\` etc.) or document (\`.pdf/.docx/...\`, \u2264100MB): sent as an attachment
 
-The plugin consumes the outbox on its next poll (~30-60 s). A successful send deletes the file and archives a copy under \`${s.sentFolder}/\`; a failure keeps the file (an \`.md\` gets a \`<!-- Wechatian send failed: ... -->\` comment appended, a media file gets a \`<name>.wechatian-failed.md\` sidecar). After writing, wait about a minute and check whether the file still exists to determine the result.
+The plugin consumes the outbox on its next poll (~30-60 s). A successful send deletes the file and records the message in today's conversation note under \`${s.inboxFolder}/\` (marked "sent"; media sends keep a copy under \`${s.attachmentFolder}/\` and link it from the note). A failure keeps the file (an \`.md\` gets a \`<!-- Wechatian send failed: ... -->\` comment appended, a media file gets a \`<name>.wechatian-failed.md\` sidecar). After writing, wait about a minute and check whether the file still exists to determine the result.
 
 ## Receiving
 
-Inbound WeChat messages are appended to daily inbox notes under \`${s.inboxFolder}/\`; media arrives under \`${s.attachmentFolder}/\`.
+Inbound WeChat messages are appended to the same daily conversation notes under \`${s.inboxFolder}/\` (marked "received"); media arrives under \`${s.attachmentFolder}/\`.
 
 ## Constraints
 
-The gateway rate-limits proactive sends (~4-6 per day). Use this channel for notifications (task finished, long job done), not for conversation.
+The gateway rate-limits proactive sends. Use this channel for notifications (task finished, long job done), not for conversation.
 `;
 }
 function buildZh(s) {
@@ -957,15 +1104,15 @@ paths: "${pathsKey(s)}"
 - \`.md\` \u6587\u4EF6:\u5185\u5BB9\u4F5C\u4E3A\u6587\u672C\u6D88\u606F\u53D1\u9001(\u6587\u4EF6\u540D\u65E0\u8BED\u4E49)
 - \u56FE\u7247(\`.jpg/.png/.gif/.webp\`)\u3001\u89C6\u9891(\`.mp4\` \u7B49)\u6216\u6587\u6863(\`.pdf/.docx/...\`,\u2264100MB):\u4F5C\u4E3A\u9644\u4EF6\u53D1\u9001
 
-\u63D2\u4EF6\u5728\u4E0B\u4E00\u8F6E\u8F6E\u8BE2(\u7EA6 30-60 \u79D2)\u6D88\u8D39\u53D1\u4EF6\u7BB1\u3002\u53D1\u9001\u6210\u529F\u4F1A\u5220\u9664\u6587\u4EF6,\u5E76\u5728 \`${s.sentFolder}/\` \u5B58\u6863\u4E00\u4EFD\u526F\u672C;\u5931\u8D25\u4F1A\u4FDD\u7559\u6587\u4EF6(\`.md\` \u672B\u5C3E\u8FFD\u52A0 \`<!-- Wechatian send failed: ... -->\` \u6CE8\u91CA,\u5A92\u4F53\u6587\u4EF6\u751F\u6210 \`<\u6587\u4EF6\u540D>.wechatian-failed.md\` \u8BB0\u5F55)\u3002\u5199\u5165\u540E\u7B49\u7EA6\u4E00\u5206\u949F,\u68C0\u67E5\u6587\u4EF6\u662F\u5426\u8FD8\u5728\u4EE5\u5224\u65AD\u7ED3\u679C\u3002
+\u63D2\u4EF6\u5728\u4E0B\u4E00\u8F6E\u8F6E\u8BE2(\u7EA6 30-60 \u79D2)\u6D88\u8D39\u53D1\u4EF6\u7BB1\u3002\u53D1\u9001\u6210\u529F\u4F1A\u5220\u9664\u6587\u4EF6,\u5E76\u628A\u8FD9\u6761\u6D88\u606F\u8BB0\u5F55\u8FDB \`${s.inboxFolder}/\` \u4E0B\u5F53\u5929\u7684\u5BF9\u8BDD\u7B14\u8BB0(\u6807\u8BB0"\u53D1\u9001";\u5A92\u4F53\u53D1\u9001\u4F1A\u5728 \`${s.attachmentFolder}/\` \u5B58\u4E00\u4EFD\u526F\u672C\u5E76\u5728\u7B14\u8BB0\u91CC\u94FE\u63A5)\u3002\u5931\u8D25\u4F1A\u4FDD\u7559\u6587\u4EF6(\`.md\` \u672B\u5C3E\u8FFD\u52A0 \`<!-- Wechatian send failed: ... -->\` \u6CE8\u91CA,\u5A92\u4F53\u6587\u4EF6\u751F\u6210 \`<\u6587\u4EF6\u540D>.wechatian-failed.md\` \u8BB0\u5F55)\u3002\u5199\u5165\u540E\u7B49\u7EA6\u4E00\u5206\u949F,\u68C0\u67E5\u6587\u4EF6\u662F\u5426\u8FD8\u5728\u4EE5\u5224\u65AD\u7ED3\u679C\u3002
 
 ## \u63A5\u6536
 
-\u6536\u5230\u7684\u5FAE\u4FE1\u6D88\u606F\u4F1A\u8FFD\u52A0\u5230 \`${s.inboxFolder}/\` \u4E0B\u7684\u6BCF\u65E5\u6536\u4EF6\u7BB1\u7B14\u8BB0,\u5A92\u4F53\u9644\u4EF6\u4FDD\u5B58\u5728 \`${s.attachmentFolder}/\`\u3002
+\u6536\u5230\u7684\u5FAE\u4FE1\u6D88\u606F\u8FFD\u52A0\u5230\u540C\u4E00\u4EFD\u6BCF\u65E5\u5BF9\u8BDD\u7B14\u8BB0 \`${s.inboxFolder}/\`(\u6807\u8BB0"\u63A5\u6536"),\u5A92\u4F53\u9644\u4EF6\u4FDD\u5B58\u5728 \`${s.attachmentFolder}/\`\u3002
 
 ## \u9650\u5236
 
-\u7F51\u5173\u5BF9\u4E3B\u52A8\u6D88\u606F\u9650\u6D41(\u7EA6\u6BCF\u5929 4-6 \u6761)\u3002\u7528\u4E8E\u901A\u77E5(\u4EFB\u52A1\u5B8C\u6210\u3001\u957F\u4EFB\u52A1\u7ED3\u675F),\u4E0D\u8981\u5F53\u804A\u5929\u901A\u9053\u3002
+\u7F51\u5173\u5BF9\u4E3B\u52A8\u6D88\u606F\u6709\u9650\u6D41\u3002\u7528\u4E8E\u901A\u77E5(\u4EFB\u52A1\u5B8C\u6210\u3001\u957F\u4EFB\u52A1\u7ED3\u675F),\u4E0D\u8981\u5F53\u804A\u5929\u901A\u9053\u3002
 `;
 }
 async function ensureAgentGuide(app, s, lang) {
@@ -1033,7 +1180,7 @@ async function loginLoop(transport, apiBase, cb, timeoutMs = 48e4) {
         scannedPrinted = false;
       } catch (e) {
         cb.onError(t("qr.refreshFailed", { err: String(e?.message ?? e) }));
-        await sleep2(1e3);
+        await sleep3(1e3);
         continue;
       }
     }
@@ -1042,21 +1189,21 @@ async function loginLoop(transport, apiBase, cb, timeoutMs = 48e4) {
       st = await pollQrStatus(transport, apiBase, cur.qrKey);
     } catch (e) {
       cb.onError(t("qr.queryFailed", { err: String(e?.message ?? e) }));
-      await sleep2(1e3);
+      await sleep3(1e3);
       continue;
     }
     if (cb.cancelled()) return null;
     switch (st.status) {
       case "wait":
       case "":
-        await sleep2(200);
+        await sleep3(200);
         break;
       case "scaned":
         if (!scannedPrinted) {
           scannedPrinted = true;
           cb.onScanned();
         }
-        await sleep2(300);
+        await sleep3(300);
         break;
       case "expired": {
         refreshCount++;
@@ -1070,7 +1217,7 @@ async function loginLoop(transport, apiBase, cb, timeoutMs = 48e4) {
           scannedPrinted = false;
         } catch (e) {
           cb.onError(t("qr.refreshFailed", { err: String(e?.message ?? e) }));
-          await sleep2(1e3);
+          await sleep3(1e3);
         }
         break;
       }
@@ -1089,13 +1236,13 @@ async function loginLoop(transport, apiBase, cb, timeoutMs = 48e4) {
         };
       }
       default:
-        await sleep2(500);
+        await sleep3(500);
     }
   }
   cb.onError(t("qr.timeout"));
   return null;
 }
-function sleep2(ms) {
+function sleep3(ms) {
   return new Promise((r) => window.setTimeout(r, ms));
 }
 
@@ -1460,12 +1607,11 @@ var DEFAULT_SETTINGS = {
   attachmentFolder: "Wechatian/attachments",
   articleFolder: "Wechatian/articles",
   outboxFolder: "Wechatian/outbox",
-  sentFolder: "Wechatian/sentbox",
   fetchArticles: true,
   autoImport: true,
   notifyOnMessage: true
 };
-var FOLDER_KEYS = ["inboxFolder", "attachmentFolder", "articleFolder", "outboxFolder", "sentFolder"];
+var FOLDER_KEYS = ["inboxFolder", "attachmentFolder", "articleFolder", "outboxFolder"];
 var WechatianSettingTab = class extends import_obsidian4.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
@@ -1528,11 +1674,6 @@ var WechatianSettingTab = class extends import_obsidian4.PluginSettingTab {
         control: { type: "text", key: "outboxFolder", defaultValue: DEFAULT_SETTINGS.outboxFolder }
       },
       {
-        name: t("set.sentFolder"),
-        desc: t("set.sentFolder.desc"),
-        control: { type: "text", key: "sentFolder", defaultValue: DEFAULT_SETTINGS.sentFolder }
-      },
-      {
         name: t("set.autoImport"),
         desc: t("set.autoImport.desc"),
         control: { type: "toggle", key: "autoImport", defaultValue: DEFAULT_SETTINGS.autoImport }
@@ -1581,7 +1722,7 @@ var WechatianSettingTab = class extends import_obsidian4.PluginSettingTab {
       );
       let testInput = null;
       new import_obsidian4.Setting(section).setName(t("sendTest.name")).setDesc(t("sendTest.desc")).addText((txt) => {
-        txt.setPlaceholder("Type a message").setValue("Testing 123");
+        txt.setPlaceholder(t("sendTest.placeholder")).setValue("Testing 123");
         txt.inputEl.addClass("wechatian-send-input");
         testInput = txt;
       }).addButton((b) => {
@@ -1624,7 +1765,7 @@ var WechatianSettingTab = class extends import_obsidian4.PluginSettingTab {
         if (this.alive) statusEl.setText(t("login.scanned"));
       },
       onError: (msg) => {
-        if (this.alive) statusEl.setText(`\u26A0\uFE0F ${msg}`);
+        if (this.alive) statusEl.setText(msg);
       },
       cancelled: () => !this.alive
     });
@@ -1747,9 +1888,10 @@ var Outbox = class {
    * This is a one-to-one channel: every file is delivered to the account that
    * scanned to bind the bot (the owner), so the file name carries no recipient.
    * .md files are sent as text; images/videos/other binaries go through the CDN.
-   * Successful sends are archived into sentFolder before the outbox file is deleted.
+   * Successful sends delete the outbox file and are recorded in the daily
+   * conversation note; media sends also keep a copy in the attachment folder.
    */
-  async flush(client, store, folder, sentFolder) {
+  async flush(client, store, folder, inboxFolder, attachmentFolder) {
     if (!folder || !await this.app.vault.adapter.exists(folder)) return 0;
     const st = store.get();
     const to = st.scannedUser.trim();
@@ -1761,27 +1903,17 @@ var Outbox = class {
       const name = path.split("/").pop() ?? "";
       const ext = (name.includes(".") ? name.split(".").pop() ?? "" : "").toLowerCase();
       if (ext === "md") {
-        processed += await this.flushTextFile(client, path, to, contextToken, sentFolder);
+        processed += await this.flushTextFile(client, path, to, contextToken, inboxFolder);
         continue;
       }
       if (IMAGE_EXTS.has(ext) || isVideoExt(ext) || BINARY_EXTS.has(ext)) {
-        processed += await this.flushMediaFile(client, path, name, to, contextToken, sentFolder);
+        processed += await this.flushMediaFile(client, path, name, to, contextToken, inboxFolder, attachmentFolder);
       }
     }
     return processed;
   }
-  /** Copy the sent content into the sent folder (best-effort; the send itself already succeeded) */
-  async archive(sentFolder, fileName, content) {
-    if (!sentFolder) return;
-    try {
-      await ensureFolder(this.app, sentFolder);
-      const path = `${sentFolder}/${sentStamp(Date.now())}_${sanitizeFileName(fileName)}`;
-      await this.app.vault.adapter.write(path, content);
-    } catch {
-    }
-  }
   /** .md -> send the content as a text message */
-  async flushTextFile(client, path, to, contextToken, sentFolder) {
+  async flushTextFile(client, path, to, contextToken, inboxFolder) {
     const content = (await this.app.vault.adapter.read(path)).trim();
     if (!content) {
       await this.app.vault.adapter.remove(path);
@@ -1789,8 +1921,12 @@ var Outbox = class {
     }
     const res = await client.sendText(to, content, contextToken);
     if (res.ok) {
-      await this.archive(sentFolder, path.split("/").pop() ?? "message.md", `${content}
-`);
+      const now = Date.now();
+      await appendOutbound(this.app, inboxFolder, now, to, [
+        `**${timeOfDay(now)}** \xB7 ${t("importer.sent")}`,
+        "",
+        ...quoteBlock(content)
+      ]);
       await this.app.vault.adapter.remove(path);
       return 1;
     }
@@ -1802,7 +1938,7 @@ var Outbox = class {
     return 0;
   }
   /** image/video/file -> AES-ECB encrypt, upload to CDN, send as a media message */
-  async flushMediaFile(client, path, name, to, contextToken, sentFolder) {
+  async flushMediaFile(client, path, name, to, contextToken, inboxFolder, attachmentFolder) {
     const ext = (name.includes(".") ? name.split(".").pop() ?? "" : "").toLowerCase();
     const kind = IMAGE_EXTS.has(ext) ? "image" : isVideoExt(ext) ? "video" : "file";
     let data;
@@ -1813,7 +1949,21 @@ var Outbox = class {
     }
     const res = await client.sendMedia(to, { kind, name, data }, contextToken);
     if (res.ok) {
-      await this.archive(sentFolder, name, "");
+      const now = Date.now();
+      const copyPath = `${attachmentFolder}/${dayStamp(now)}_${timeOfDay(now).replace(":", "")}_sent_${sanitizeFileName(name)}`;
+      let linkLine = name;
+      try {
+        await ensureFolder(this.app, attachmentFolder);
+        const ab = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
+        await this.app.vault.adapter.writeBinary(copyPath, ab);
+        linkLine = kind === "image" ? `![[${copyPath}]]` : `[[${copyPath}|${name}]]`;
+      } catch {
+      }
+      await appendOutbound(this.app, inboxFolder, now, to, [
+        `**${timeOfDay(now)}** \xB7 ${t("importer.sent")}`,
+        "",
+        ...quoteBlock(linkLine)
+      ]);
       await this.app.vault.adapter.remove(path);
       return 1;
     }
@@ -1901,11 +2051,9 @@ var WechatianPlugin = class extends import_obsidian6.Plugin {
     const raw = await this.loadData();
     if (raw && typeof raw === "object") {
       delete raw.allowFrom;
+      delete raw.sentFolder;
     }
     this.settings = Object.assign({}, DEFAULT_SETTINGS, raw ?? {});
-    if (raw && typeof raw === "object" && !("sentFolder" in raw)) {
-      this.settings.sentFolder = `${this.settings.inboxFolder}/sentbox`;
-    }
   }
   async saveSettings() {
     await this.saveData(this.settings);
@@ -1924,23 +2072,13 @@ var WechatianPlugin = class extends import_obsidian6.Plugin {
   /** Create the whole Wechat directory tree + Agent.md once the plugin is enabled */
   async ensureFolders() {
     const s = this.settings;
-    for (const folder of [s.inboxFolder, s.attachmentFolder, s.articleFolder, s.outboxFolder, s.sentFolder]) {
+    for (const folder of [s.inboxFolder, s.attachmentFolder, s.articleFolder, s.outboxFolder]) {
       try {
         await ensureFolder(this.app, folder);
       } catch {
       }
     }
     await ensureAgentGuide(this.app, s, resolvedLanguage());
-  }
-  /** Archive a successfully sent text message into the sent folder */
-  async archiveSent(text, source) {
-    const path = `${this.settings.sentFolder}/${sentStamp(Date.now())}_${source}_${sanitizeFileName(text.slice(0, 20)) || "message"}.md`;
-    try {
-      await ensureFolder(this.app, this.settings.sentFolder);
-      await this.app.vault.adapter.write(path, `${text.trim()}
-`);
-    } catch {
-    }
   }
   /** Directory settings changed: re-sync Agent.md with the new paths */
   refreshAgentGuide() {
@@ -2059,7 +2197,14 @@ var WechatianPlugin = class extends import_obsidian6.Plugin {
     if (!to || !st.token.trim()) return { ok: false, errmsg: t("sendTest.notBound") };
     const client = this.client ?? this.makeClient();
     const res = await client.sendText(to, text, st.contextTokens[to] ?? "");
-    if (res.ok) await this.archiveSent(text, "test");
+    if (res.ok) {
+      const now = Date.now();
+      await appendOutbound(this.app, this.settings.inboxFolder, now, to, [
+        `**${timeOfDay(now)}** \xB7 ${t("importer.sent")}`,
+        "",
+        ...quoteBlock(text)
+      ]);
+    }
     return { ok: res.ok, errmsg: res.errmsg.trim() || res.raw || "" };
   }
   makeClient() {
@@ -2125,7 +2270,13 @@ var WechatianPlugin = class extends import_obsidian6.Plugin {
         await this.handleInbound(msg);
       }
       try {
-        await this.outbox?.flush(this.client, store, this.settings.outboxFolder, this.settings.sentFolder);
+        await this.outbox?.flush(
+          this.client,
+          store,
+          this.settings.outboxFolder,
+          this.settings.inboxFolder,
+          this.settings.attachmentFolder
+        );
       } catch {
       }
       void store.saveNow();

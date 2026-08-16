@@ -28,6 +28,23 @@ export function bodyText(r: HttpResponse): string {
   return Buffer.from(r.body).toString('utf8');
 }
 
+/**
+ * Decode a response body to text, transparently gunzipping when the transport
+ * handed us a compressed body (some hosts ignore Accept-Encoding: identity).
+ */
+export async function bodyTextAuto(r: HttpResponse): Promise<string> {
+  const bytes = new Uint8Array(r.body);
+  if (bytes.length > 2 && bytes[0] === 0x1f && bytes[1] === 0x8b) {
+    try {
+      const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
+      return await new Response(stream).text();
+    } catch {
+      /* fall through to raw decode */
+    }
+  }
+  return Buffer.from(r.body).toString('utf8');
+}
+
 export function bodyJson<T>(r: HttpResponse): T {
   return JSON.parse(bodyText(r)) as T;
 }

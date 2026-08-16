@@ -4,7 +4,7 @@ import type { IlinkClient } from './core/ilink';
 import { isVideoExt } from './core/ilink';
 import type { StateStore } from './core/store';
 import type { OutboundAttachment } from './core/types';
-import { ensureFolder, sentStamp, sanitizeFileName } from './core/importer';
+import { appendOutbound, dayStamp, ensureFolder, quoteBlock, sanitizeFileName, timeOfDay } from './core/importer';
 import { t } from './i18n';
 
 const IMAGE_EXTS = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp']);
@@ -17,9 +17,16 @@ export class Outbox {
    * This is a one-to-one channel: every file is delivered to the account that
    * scanned to bind the bot (the owner), so the file name carries no recipient.
    * .md files are sent as text; images/videos/other binaries go through the CDN.
-   * Successful sends are archived into sentFolder before the outbox file is deleted.
+   * Successful sends delete the outbox file and are recorded in the daily
+   * conversation note; media sends also keep a copy in the attachment folder.
    */
-  async flush(client: IlinkClient, store: StateStore, folder: string, sentFolder: string): Promise<number> {
+  async flush(
+    client: IlinkClient,
+    store: StateStore,
+    folder: string,
+    inboxFolder: string,
+    attachmentFolder: string,
+  ): Promise<number> {
     if (!folder || !(await this.app.vault.adapter.exists(folder))) return 0;
     const st = store.get();
     const to = st.scannedUser.trim();
@@ -32,27 +39,15 @@ export class Outbox {
       const ext = (name.includes('.') ? name.split('.').pop() ?? '' : '').toLowerCase();
 
       if (ext === 'md') {
-        processed += await this.flushTextFile(client, path, to, contextToken, sentFolder);
+        processed += await this.flushTextFile(client, path, to, contextToken, inboxFolder);
         continue;
       }
       if (IMAGE_EXTS.has(ext) || isVideoExt(ext) || BINARY_EXTS.has(ext)) {
-        processed += await this.flushMediaFile(client, path, name, to, contextToken, sentFolder);
+        processed += await this.flushMediaFile(client, path, name, to, contextToken, inboxFolder, attachmentFolder);
       }
       // unknown extensions are left in place (the user can move them out manually)
     }
     return processed;
-  }
-
-  /** Copy the sent content into the sent folder (best-effort; the send itself already succeeded) */
-  private async archive(sentFolder: string, fileName: string, content: string): Promise<void> {
-    if (!sentFolder) return;
-    try {
-      await ensureFolder(this.app, sentFolder);
-      const path = `${sentFolder}/${sentStamp(Date.now())}_${sanitizeFileName(fileName)}`;
-      await this.app.vault.adapter.write(path, content);
-    } catch {
-      /* ignore */
-    }
   }
 
   /** .md -> send the content as a text message */
@@ -61,7 +56,7 @@ export class Outbox {
     path: string,
     to: string,
     contextToken: string,
-    sentFolder: string,
+    inboxFolder: string,
   ): Promise<number> {
     const content = (await this.app.vault.adapter.read(path)).trim();
     if (!content) {
@@ -70,7 +65,12 @@ export class Outbox {
     }
     const res = await client.sendText(to, content, contextToken);
     if (res.ok) {
-      await this.archive(sentFolder, path.split('/').pop() ?? 'message.md', `${content}\n`);
+      const now = Date.now();
+      await appendOutbound(this.app, inboxFolder, now, to, [
+        `**${timeOfDay(now)}** · ${t('importer.sent')}`,
+        '',
+        ...quoteBlock(content),
+      ]);
       await this.app.vault.adapter.remove(path);
       return 1;
     }
@@ -88,7 +88,8 @@ export class Outbox {
     name: string,
     to: string,
     contextToken: string,
-    sentFolder: string,
+    inboxFolder: string,
+    attachmentFolder: string,
   ): Promise<number> {
     const ext = (name.includes('.') ? name.split('.').pop() ?? '' : '').toLowerCase();
     const kind: OutboundAttachment['kind'] = IMAGE_EXTS.has(ext) ? 'image' : isVideoExt(ext) ? 'video' : 'file';
@@ -100,7 +101,24 @@ export class Outbox {
     }
     const res = await client.sendMedia(to, { kind, name, data }, contextToken);
     if (res.ok) {
-      await this.archive(sentFolder, name, ''); // binary: archive a 0-byte copy to keep a record
+      // keep a copy next to received media so the conversation note can link it
+      const now = Date.now();
+      const copyPath = `${attachmentFolder}/${dayStamp(now)}_${timeOfDay(now).replace(':', '')}_sent_${sanitizeFileName(name)}`;
+      let linkLine = name;
+      try {
+        await ensureFolder(this.app, attachmentFolder);
+        // writeBinary needs an ArrayBuffer; slice out the exact region from the Uint8Array view
+        const ab = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer;
+        await this.app.vault.adapter.writeBinary(copyPath, ab);
+        linkLine = kind === 'image' ? `![[${copyPath}]]` : `[[${copyPath}|${name}]]`;
+      } catch {
+        /* the copy is best-effort; the send itself already succeeded */
+      }
+      await appendOutbound(this.app, inboxFolder, now, to, [
+        `**${timeOfDay(now)}** · ${t('importer.sent')}`,
+        '',
+        ...quoteBlock(linkLine),
+      ]);
       await this.app.vault.adapter.remove(path);
       return 1;
     }
