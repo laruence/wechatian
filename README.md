@@ -26,9 +26,13 @@ Received messages become daily conversation notes; media and full-text article c
 
 ## Install
 
-Not on the community plugin store yet — install manually.
+**From the community store (recommended):** Settings → Community plugins in Obsidian, search for **Wechatian**, install and enable.
 
-**From a release:** copy `main.js`, `manifest.json` and `styles.css` into `<vault>/.obsidian/plugins/wechatian/`, then enable **Wechatian** in Obsidian's settings (Settings → Community plugins → reload the plugin list).
+**Manually from a release:** download `main.js`, `manifest.json` and `styles.css` from the [latest release](https://github.com/laruence/wechatian/releases/latest) into `<vault>/.obsidian/plugins/wechatian/`, then enable **Wechatian** in Obsidian's settings (Settings → Community plugins → reload the plugin list). Release assets are built in CI and carry GitHub artifact attestations:
+
+```bash
+gh attestation verify main.js --owner laruence
+```
 
 **From source:**
 
@@ -39,7 +43,7 @@ npm install
 npm run build        # bundles main.js and copies it into the vault plugin dir
 ```
 
-By default the build copies into `$HOME/Library/Mobile Documents/iCloud~md~obsidian/Documents/Laruence/.obsidian/plugins/wechatian/` (the author's vault). Point it at your own vault with:
+The build also copies the bundle into a vault plugin directory. By default it targets the author's own vault; point it at yours with:
 
 ```bash
 OBSIDIAN_PLUGIN_DIR=/path/to/vault/.obsidian/plugins/wechatian npm run build
@@ -119,6 +123,13 @@ npm run watch      # rebuild on change
 npm run lint       # Obsidian submission checker (eslint-plugin-obsidianmd)
 ```
 
+**Releasing**: don't build release assets locally. Bump the version in `manifest.json`, `package.json` and `versions.json`, commit, then tag and push — CI builds the assets, signs them with artifact attestations and uploads them to the release:
+
+```bash
+git tag x.y.z
+git push origin x.y.z
+```
+
 Node smoke tests against the live gateway (`scripts/smoke.js`):
 
 ```bash
@@ -163,7 +174,9 @@ node scripts/smoke.js sendfile <token> <to> <f>   # send an attachment
 
 ### 安装
 
-未上架社区插件商店,手动安装:release 里把 `main.js`、`manifest.json`、`styles.css` 拷进 `<vault>/.obsidian/plugins/wechatian/` 并在设置里启用;或源码构建(`OBSIDIAN_PLUGIN_DIR=<你的vault插件目录> npm run build` 指定目标)。每次重新构建后在 Obsidian 里重载插件。注意:首次扫码绑定后,需先从微信给 bot 发一条任意消息获取发送凭据(见"快速上手"第 3 步),否则 bot 暂时无法主动发送。
+**推荐**:Obsidian 设置 → 第三方插件,搜索 **Wechatian**,安装并启用。
+
+手动安装:从 [最新 release](https://github.com/laruence/wechatian/releases/latest) 下载 `main.js`、`manifest.json`、`styles.css` 三个文件,拷进 `<vault>/.obsidian/plugins/wechatian/` 并在设置里启用(release 资产由 CI 构建并带 GitHub artifact attestation 签名,可用 `gh attestation verify main.js --owner laruence` 验证);或源码构建(`OBSIDIAN_PLUGIN_DIR=<你的vault插件目录> npm run build` 指定目标)。每次重新构建后在 Obsidian 里重载插件。注意:首次扫码绑定后,需先从微信给 bot 发一条任意消息获取发送凭据(见"快速上手"第 3 步),否则 bot 暂时无法主动发送。
 
 ## License
 
