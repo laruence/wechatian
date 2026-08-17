@@ -1050,11 +1050,13 @@ async function appendOutbound(app, inboxFolder, timeMs, sender, lines) {
 }
 
 // src/core/agent-guide.ts
+var GUIDE_REV = "2";
 function agentGuideMeta(content) {
   const fm = /^---\s*\n([\s\S]*?)\n---/.exec(content)?.[1] ?? "";
   const lang = /lang:\s*"?(\w+)"?/.exec(fm)?.[1] ?? "";
   const paths = /paths:\s*"([^"]*)"/.exec(fm)?.[1] ?? "";
-  return { lang, paths };
+  const rev = /rev:\s*"?(\w+)"?/.exec(fm)?.[1] ?? "";
+  return { lang, paths, rev };
 }
 function pathsKey(s) {
   return [s.inboxFolder, s.outboxFolder, s.attachmentFolder].join("|");
@@ -1062,6 +1064,7 @@ function pathsKey(s) {
 function buildEn(s) {
   return `---
 lang: en
+rev: ${GUIDE_REV}
 paths: "${pathsKey(s)}"
 ---
 
@@ -1073,7 +1076,7 @@ This Obsidian vault runs the Wechatian plugin, which exposes a one-to-one WeChat
 
 Write a file into the outbox folder \`${s.outboxFolder}/\`:
 
-- \`.md\` file: the content is sent as a text message (the file name carries no meaning)
+- \`.md\` file: the content is sent verbatim as a text message \u2014 **markdown is supported** (headings, lists, bold, code blocks); keep it within a phone screen or so (the file name carries no meaning)
 - Image (\`.jpg/.png/.gif/.webp\`), video (\`.mp4\` etc.) or document (\`.pdf/.docx/...\`, \u2264100MB): sent as an attachment
 
 The plugin consumes the outbox on its next poll (~30-60 s). A successful send deletes the file and records the message in today's conversation note under \`${s.inboxFolder}/\` (marked "sent"; media sends keep a copy under \`${s.attachmentFolder}/\` and link it from the note). A failure keeps the file (an \`.md\` gets a \`<!-- Wechatian send failed: ... -->\` comment appended, a media file gets a \`<name>.wechatian-failed.md\` sidecar). After writing, wait about a minute and check whether the file still exists to determine the result.
@@ -1090,6 +1093,7 @@ The gateway rate-limits proactive sends. Use this channel for notifications (tas
 function buildZh(s) {
   return `---
 lang: zh
+rev: ${GUIDE_REV}
 paths: "${pathsKey(s)}"
 ---
 
@@ -1101,7 +1105,7 @@ paths: "${pathsKey(s)}"
 
 \u5F80\u53D1\u4EF6\u7BB1\u76EE\u5F55 \`${s.outboxFolder}/\` \u5199\u4E00\u4E2A\u6587\u4EF6:
 
-- \`.md\` \u6587\u4EF6:\u5185\u5BB9\u4F5C\u4E3A\u6587\u672C\u6D88\u606F\u53D1\u9001(\u6587\u4EF6\u540D\u65E0\u8BED\u4E49)
+- \`.md\` \u6587\u4EF6:\u5185\u5BB9**\u539F\u6837**\u4F5C\u4E3A\u6587\u672C\u6D88\u606F\u53D1\u9001,**\u652F\u6301 markdown \u683C\u5F0F**(\u6807\u9898\u3001\u5217\u8868\u3001\u52A0\u7C97\u3001\u4EE3\u7801\u5757),\u5EFA\u8BAE\u63A7\u5236\u5728\u624B\u673A\u4E00\u5C4F\u5185(\u6587\u4EF6\u540D\u65E0\u8BED\u4E49)
 - \u56FE\u7247(\`.jpg/.png/.gif/.webp\`)\u3001\u89C6\u9891(\`.mp4\` \u7B49)\u6216\u6587\u6863(\`.pdf/.docx/...\`,\u2264100MB):\u4F5C\u4E3A\u9644\u4EF6\u53D1\u9001
 
 \u63D2\u4EF6\u5728\u4E0B\u4E00\u8F6E\u8F6E\u8BE2(\u7EA6 30-60 \u79D2)\u6D88\u8D39\u53D1\u4EF6\u7BB1\u3002\u53D1\u9001\u6210\u529F\u4F1A\u5220\u9664\u6587\u4EF6,\u5E76\u628A\u8FD9\u6761\u6D88\u606F\u8BB0\u5F55\u8FDB \`${s.inboxFolder}/\` \u4E0B\u5F53\u5929\u7684\u5BF9\u8BDD\u7B14\u8BB0(\u6807\u8BB0"\u53D1\u9001";\u5A92\u4F53\u53D1\u9001\u4F1A\u5728 \`${s.attachmentFolder}/\` \u5B58\u4E00\u4EFD\u526F\u672C\u5E76\u5728\u7B14\u8BB0\u91CC\u94FE\u63A5)\u3002\u5931\u8D25\u4F1A\u4FDD\u7559\u6587\u4EF6(\`.md\` \u672B\u5C3E\u8FFD\u52A0 \`<!-- Wechatian send failed: ... -->\` \u6CE8\u91CA,\u5A92\u4F53\u6587\u4EF6\u751F\u6210 \`<\u6587\u4EF6\u540D>.wechatian-failed.md\` \u8BB0\u5F55)\u3002\u5199\u5165\u540E\u7B49\u7EA6\u4E00\u5206\u949F,\u68C0\u67E5\u6587\u4EF6\u662F\u5426\u8FD8\u5728\u4EE5\u5224\u65AD\u7ED3\u679C\u3002
@@ -1121,7 +1125,7 @@ async function ensureAgentGuide(app, s, lang) {
   try {
     if (await app.vault.adapter.exists(path)) {
       const cur = agentGuideMeta(await app.vault.adapter.read(path));
-      if (cur.lang === lang && cur.paths === pathsKey(s)) return;
+      if (cur.lang === lang && cur.rev === GUIDE_REV && cur.paths === pathsKey(s)) return;
     } else {
       await ensureFolder(app, s.inboxFolder);
     }
