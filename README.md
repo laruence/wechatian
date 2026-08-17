@@ -51,6 +51,13 @@ OBSIDIAN_PLUGIN_DIR=/path/to/vault/.obsidian/plugins/wechatian npm run build
 
 After every rebuild, reload the plugin in Obsidian (disable/enable it, or restart) to load the new `main.js`.
 
+**Via AI agent:** point your AI assistant at this repository — https://github.com/laruence/wechatian — and tell it: *"Read this README and install the Wechatian plugin into my Obsidian vault."* The agent should:
+
+1. Download `main.js`, `manifest.json` and `styles.css` from the [latest release](https://github.com/laruence/wechatian/releases/latest) — verifiable with `gh attestation verify main.js --owner laruence`
+2. Place the three files into `<vault>/.obsidian/plugins/wechatian/`
+3. Ask you to enable **Wechatian** in Obsidian's settings (Settings → Community plugins)
+4. Walk you through QR binding (Quick start below)
+
 ## Quick start
 
 1. Open the Wechatian settings page — a QR code appears automatically
@@ -177,6 +184,13 @@ node scripts/smoke.js sendfile <token> <to> <f>   # send an attachment
 **推荐**:Obsidian 设置 → 第三方插件,搜索 **Wechatian**,安装并启用。
 
 手动安装:从 [最新 release](https://github.com/laruence/wechatian/releases/latest) 下载 `main.js`、`manifest.json`、`styles.css` 三个文件,拷进 `<vault>/.obsidian/plugins/wechatian/` 并在设置里启用(release 资产由 CI 构建并带 GitHub artifact attestation 签名,可用 `gh attestation verify main.js --owner laruence` 验证);或源码构建(`OBSIDIAN_PLUGIN_DIR=<你的vault插件目录> npm run build` 指定目标)。每次重新构建后在 Obsidian 里重载插件。注意:首次扫码绑定后,需先从微信给 bot 发一条任意消息获取发送凭据(见"快速上手"第 3 步),否则 bot 暂时无法主动发送。
+
+**AI 代装**:把仓库地址 https://github.com/laruence/wechatian 交给你的 AI 助手,对它说"阅读这份 README,把 Wechatian 安装到我的 vault 里"。Agent 应当:
+
+1. 从[最新 release](https://github.com/laruence/wechatian/releases/latest) 下载 `main.js`、`manifest.json`、`styles.css`(可用 `gh attestation verify main.js --owner laruence` 验证来源)
+2. 三个文件放进 `<vault>/.obsidian/plugins/wechatian/`
+3. 请你在 Obsidian 设置 → 第三方插件中启用 **Wechatian**
+4. 带你完成扫码绑定(见下方"快速上手")
 
 ## License
 
