@@ -60,16 +60,6 @@ The plugin picks files up on its next poll (~30–60 s): file gone = sent (recor
 - **No forwarding** — the bot can't receive forwarded articles/files; send a link or a file message instead
 - **Privacy & security** — messages live only in your vault; only the QR-scanning account is accepted
 
-## Development
-
-```bash
-npm run build      # bundles main.js (+ smoke test)
-npm run watch      # rebuild on change
-npm run lint       # Obsidian submission checker
-```
-
-Releasing: bump versions, tag, push — CI builds and signs the assets. `node scripts/smoke.js` talks to the live gateway for manual testing.
-
 ---
 
 ## 中文说明
