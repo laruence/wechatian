@@ -1,5 +1,7 @@
 # Wechatian
 
+[![Downloads](https://img.shields.io/obsidian/downloads/wechatian)](https://obsidian.md/plugins?id=wechatian)
+
 An [Obsidian](https://obsidian.md) plugin that turns WeChat into a two-way bridge for your vault, through Tencent's official **ilink** bot gateway — no unofficial protocol hacks, no self-hosted relay.
 
 Received messages become daily conversation notes; media and full-text article captures are filed alongside them; and AI agents can message you on WeChat simply by writing a file.
@@ -61,7 +63,7 @@ After every rebuild, reload the plugin in Obsidian (disable/enable it, or restar
 ## Quick start
 
 1. Open the Wechatian settings page — a QR code appears automatically
-2. Scan it with WeChat and confirm on your phone
+2. Scan it with WeChat and confirm on your phone — a bot contact (named **WeChat ClawBot** by default; rename it and give it an avatar if you like) appears in your WeChat contacts
 3. **Send any message to the bot from WeChat** — the gateway only hands out a send credential (context token) once the bound account has messaged the bot; without this step the bot cannot send yet
 4. The status bar shows "WeChat online"; incoming messages land in your inbox folder, and the plugin can now send back
 
@@ -72,7 +74,7 @@ All folders are created automatically when the plugin loads (defaults shown; eve
 ```
 Wechatian/
 ├── Agent.md            # instructions for AI agents (follows UI language)
-├── 2026-08-16.md       # daily conversation note (received + sent)
+├── 2026-08-17.md       # daily conversation note (received + sent)
 ├── attachments/        # received media and sent media copies
 ├── articles/           # full-text article notes generated from links
 └── outbox/             # write a file here to send it
@@ -119,6 +121,7 @@ If you are an AI agent working in a vault with Wechatian installed:
 - **Privacy** — the plugin talks to the WeChat ilink gateway directly; message content is stored only in your vault
 - **Rate limit** — the gateway rate-limits proactive sends; this channel is designed for notifications, not conversations
 - **One device per account** — concurrent long polling from multiple devices competes for the same message stream
+- **No forwarding** — the bot conversation can't receive forwarded articles or files the way a regular WeChat contact does: to clip an article, copy its link and send it; media must be sent as file messages
 - **Security** — only messages from the account that scanned the QR code are accepted, so a leaked bot ID alone cannot write into your vault
 
 ## Development
@@ -160,7 +163,7 @@ node scripts/smoke.js sendfile <token> <to> <f>   # send an attachment
 ### 快速上手
 
 1. 打开 Wechatian 设置页,二维码自动出现
-2. 用微信扫码,在手机上确认登录
+2. 用微信扫码,在手机上确认登录——微信联系人里会出现一个机器人(默认名"微信 ClawBot",可以随意改名换头像)
 3. **从微信给 bot 发一条任意消息**——网关只在绑定账号给 bot 发过消息后才下发发送凭据(context token),少了这一步 bot 暂时发不出消息
 4. 状态栏显示"微信在线":收的消息进收件箱,bot 也具备了发送能力
 
@@ -191,6 +194,15 @@ node scripts/smoke.js sendfile <token> <to> <f>   # send an attachment
 2. 三个文件放进 `<vault>/.obsidian/plugins/wechatian/`
 3. 请你在 Obsidian 设置 → 第三方插件中启用 **Wechatian**
 4. 带你完成扫码绑定(见下方"快速上手")
+
+### 注意事项
+
+- **首次发送**:扫码绑定后,先从微信给 bot 发一条任意消息解锁发送能力(见"快速上手"第 3 步)
+- **隐私**:插件直连微信 ilink 网关,消息内容只存在于你自己的 vault
+- **限流**:网关对主动发送限流,这条通道用于通知和拍板,不是聊天工具
+- **单设备**:同一个微信账号同时只建议一台设备在线,多端轮询会争抢消息
+- **不支持转发**:bot 会话不能像普通微信联系人那样接收转发的文章或文件——剪藏文章请复制链接发送,媒体需以文件消息发送
+- **安全**:只接受扫码账号发来的消息,机器人 ID 泄露也无法写入你的 vault
 
 ## License
 
