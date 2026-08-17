@@ -1,7 +1,5 @@
 # Wechatian
 
-[![Downloads](https://img.shields.io/obsidian/downloads/wechatian)](https://obsidian.md/plugins?id=wechatian)
-
 An [Obsidian](https://obsidian.md) plugin that turns WeChat into a two-way bridge for your vault, through Tencent's official **ilink** bot gateway — no unofficial protocol hacks, no self-hosted relay.
 
 Received messages become daily conversation notes; media and full-text article captures are filed alongside them; and AI agents can message you on WeChat simply by writing a file.
