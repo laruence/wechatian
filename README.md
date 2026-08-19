@@ -113,9 +113,6 @@ This is the half that makes Wechatian more than a backup tool: agents read the p
 
 ## FAQ
 
-**Does it need to stay running?**
-Yes — the bridge works while Obsidian is open with the plugin enabled. It's lightweight; enable auto-connect in settings if you want it online whenever Obsidian starts.
-
 **What if my computer is offline?**
 No problem. Messages sent to the bot while you're offline are held by the gateway, and Wechatian picks them up automatically the next time you open Obsidian. One caveat: how long the gateway keeps messages isn't documented — treat very old offline messages as best-effort.
 
