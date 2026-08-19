@@ -136,16 +136,6 @@ The plugin runs on desktop only. But the notes it writes are plain Markdown — 
 - **Journal byproduct** — daily notes double as a searchable timeline of your day's conversations
 - **Any tool can send** — the outbox is just a folder: scripts, shortcuts, cron jobs — anything that can write a file can WeChat you
 
-## Development
-
-```bash
-npm run build      # bundles main.js (+ smoke test)
-npm run watch      # rebuild on change
-npm run lint       # Obsidian submission checker
-```
-
-Releasing: bump versions, tag, push — CI builds and signs the assets. `node scripts/smoke.js` talks to the live gateway for manual testing.
-
 ---
 
 ## 中文说明
