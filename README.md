@@ -56,17 +56,19 @@ Five steps, about five minutes:
 
    <p align="center"><img src="assets/settings-no-credential.png" alt="No send credential yet toast" width="800"><br><sub>Desktop: sending stays locked until you message the bot once.</sub></p>
 
-   So send the bot any message from WeChat. That one message unlocks the outbound direction.
+   So you send the bot a message from WeChat — "Hello".
 
-4. The settings page now shows the bound account. Hit **Send** again — the phone receives the reply, closing the loop:
+4. The desktop receives it — and with that, the outbound direction unlocks:
+
+   <p align="center"><img src="assets/settings-message-received.png" alt="Incoming message toast" width="800"><br><sub>Desktop: your "Hello" arrives — outbound unlocked.</sub></p>
+
+5. Back in settings, hit **Send** — the phone receives the bot's reply:
 
    <p align="center"><img src="assets/settings-bound.png" alt="Bound settings page with test send" width="800"><br><sub>Desktop: bound, Test send ready.</sub></p>
 
-   <p align="center"><img src="assets/wechat-chat.png" alt="Phone chat with the bot" width="250"><br><sub>Phone: you said "Hello", the bot replies.</sub></p>
+   <p align="center"><img src="assets/wechat-chat.png" alt="Phone chat with the bot" width="250"><br><sub>Phone: the bot replies "Hello from wechatian".</sub></p>
 
-5. The other direction works the same: send yourself a message from WeChat — a toast confirms it landed, and within a second it's in `<inbox>/YYYY-MM-DD.md`.
-
-   <p align="center"><img src="assets/settings-message-received.png" alt="Incoming message toast" width="800"><br><sub>Desktop: an inbound WeChat message lands.</sub></p>
+   When that message lands on your phone, you're done — the bridge is live in both directions.
 
 ## Usage
 
