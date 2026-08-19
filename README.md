@@ -1,5 +1,7 @@
 # Wechatian
 
+[![CI](https://github.com/laruence/wechatian/actions/workflows/ci.yml/badge.svg)](https://github.com/laruence/wechatian/actions/workflows/ci.yml)
+
 **Your WeChat, inside your vault.**
 
 Wechatian is an [Obsidian](https://obsidian.md) plugin that bridges WeChat and your vault through Tencent's official **ilink** bot gateway — no unofficial protocol hacks, no self-hosted relay. Messages you receive become searchable notes; your AI assistant can WeChat you by dropping a file into a folder.
