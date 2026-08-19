@@ -62,9 +62,11 @@ Five steps, about five minutes:
 
    <p align="center"><img src="assets/settings-message-received.png" alt="Incoming message toast" width="800"><br><sub>Desktop: your "Hello" arrives — outbound unlocked.</sub></p>
 
-5. Back in settings, hit **Send** — the phone receives the bot's reply:
+5. Back in settings, hit **Send** — the desktop confirms the send, and the phone receives the bot's reply:
 
    <p align="center"><img src="assets/settings-bound.png" alt="Bound settings page with test send" width="800"><br><sub>Desktop: bound, Test send ready.</sub></p>
+
+   <p align="center"><img src="assets/settings-message-sent.png" alt="Message sent toast" width="800"><br><sub>Desktop: "Message sent" — the send went out.</sub></p>
 
    <p align="center"><img src="assets/wechat-chat.png" alt="Phone chat with the bot" width="250"><br><sub>Phone: the bot replies "Hello from wechatian".</sub></p>
 
@@ -93,8 +95,6 @@ Write **one file** into `outbox/`. No API, no recipient — it's a one-to-one ch
 | `chart.png`, `report.pdf` … | sent as an attachment (image / video / document, ≤100MB) |
 
 A "Message sent" toast confirms delivery; the message is also recorded in the daily note.
-
-<p align="center"><img src="assets/settings-message-sent.png" alt="Message sent toast" width="800"><br><sub>Desktop: the outbox file was delivered.</sub></p>
 
 The plugin picks files up on its next poll (~30–60 s). Judge the result by the file:
 
