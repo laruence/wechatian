@@ -11,6 +11,7 @@ export interface ImportSettings {
   attachmentFolder: string; // attachments
   articleFolder: string; // official-account articles
   fetchArticles: boolean;
+  groupArticlesByAccount: boolean; // one subfolder per official account under articleFolder
 }
 
 export interface ImportResult {
@@ -75,9 +76,15 @@ export async function importMessage(
       const info = await fetchArticle(transport, url);
       if (!info) continue; // fetch failed: the raw URL stays in the body
       const title = info.title;
-      const notePath = `${settings.articleFolder}/${dayStamp(msg.timeMs)} ${sanitizeFileName(title)}.md`;
+      // optional per-account grouping: <articleFolder>/<account>/; article images always stay
+      // inside the article tree in an assets subdir (chat attachments use attachmentFolder)
+      const accountDir =
+        settings.groupArticlesByAccount && info.account ? `/${sanitizeFileName(info.account)}` : '';
+      const notePath = `${settings.articleFolder}${accountDir}/${dayStamp(msg.timeMs)} ${sanitizeFileName(title)}.md`;
+      const mediaFolder = `${settings.articleFolder}${accountDir}/assets`;
       try {
         if (!(await app.vault.adapter.exists(notePath))) {
+          await ensureFolder(app, mediaFolder);
           // store downloaded images next to the other media, then resolve placeholders
           const base = `${dayStamp(msg.timeMs)}_${timeOfDay(msg.timeMs).replace(':', '')}`;
           let body = info.markdown;
@@ -85,7 +92,7 @@ export async function importMessage(
             const img = info.images[i];
             const ph = `![[img:${i}]]`;
             if (img.data) {
-              const path = `${settings.attachmentFolder}/${base}_article${i}.${img.ext}`;
+              const path = `${mediaFolder}/${base}_article${i}.${img.ext}`;
               try {
                 const ab = img.data.buffer.slice(
                   img.data.byteOffset,

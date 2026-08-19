@@ -43,6 +43,8 @@ const en: Dict = {
   'set.autoImport.desc': 'Write messages into the inbox as soon as they arrive',
   'set.fetchArticles': 'Fetch article info',
   'set.fetchArticles.desc': 'Automatically fetch the title/summary of links in messages and create article notes',
+  'set.groupByAccount': 'Group articles by account',
+  'set.groupByAccount.desc': 'Store article notes in a subfolder named after the official account, with its images in an assets subfolder inside it',
   'set.notify': 'Notify on message',
   'set.footer': 'Note: this plugin talks to the WeChat ilink gateway directly; messages are stored only in this vault. Proactive sends are rate-limited by the gateway.',
 
@@ -132,6 +134,8 @@ const zh: Dict = {
   'set.autoImport.desc': '收到消息后立即写入收件箱',
   'set.fetchArticles': '抓取文章信息',
   'set.fetchArticles.desc': '消息里的链接自动抓取标题/摘要并建立文章笔记',
+  'set.groupByAccount': '按公众号分目录',
+  'set.groupByAccount.desc': '文章笔记存入以公众号命名的子目录,文章配图存到该目录下的 assets 子目录',
   'set.notify': '来消息时通知',
   'set.footer': '说明:本插件直接与微信 ilink 网关通信,消息仅保存在本 vault。主动发送受网关限流。',
 

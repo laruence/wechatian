@@ -16,6 +16,8 @@ export interface ArticleInfo {
   url: string;
   title: string;
   description: string;
+  /** official-account name from #js_name; '' for non-WeChat pages (not grouped) */
+  account: string;
   /** markdown body; images appear as ![[img:N]] placeholders until the caller resolves them */
   markdown: string;
   images: ArticleImage[];
@@ -65,10 +67,19 @@ export async function fetchArticle(transport: HttpTransport, url: string): Promi
     const markdown = normalizeBlocks(toMd(root, images));
     await downloadImages(transport, images);
 
-    return { url, title: cleanText(title), description: cleanText(description), markdown, images };
+    return { url, title: cleanText(title), description: cleanText(description), account: accountName(doc), markdown, images };
   } catch {
     return null;
   }
+}
+
+/**
+ * Official-account name on a WeChat article page lives in #js_name. Generic
+ * web pages are not grouped (they have no account), so there is no fallback:
+ * '' means the article lands flat in the article folder.
+ */
+function accountName(doc: Document): string {
+  return doc.querySelector('#js_name')?.textContent?.trim() ?? '';
 }
 
 /**

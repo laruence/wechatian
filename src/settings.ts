@@ -14,6 +14,7 @@ export interface WechatianSettings {
   articleFolder: string;
   outboxFolder: string; // outbox folder (agents drop pending-send files here)
   fetchArticles: boolean; // fetch link metadata and create article notes
+  groupArticlesByAccount: boolean; // one subfolder per official account under the article folder
   autoImport: boolean;
   notifyOnMessage: boolean;
 }
@@ -26,6 +27,7 @@ export const DEFAULT_SETTINGS: WechatianSettings = {
   articleFolder: 'Wechatian/articles',
   outboxFolder: 'Wechatian/outbox',
   fetchArticles: true,
+  groupArticlesByAccount: true,
   autoImport: true,
   notifyOnMessage: true,
 };
@@ -109,6 +111,15 @@ export class WechatianSettingTab extends PluginSettingTab {
         name: t('set.fetchArticles'),
         desc: t('set.fetchArticles.desc'),
         control: { type: 'toggle', key: 'fetchArticles', defaultValue: DEFAULT_SETTINGS.fetchArticles },
+      },
+      {
+        name: t('set.groupByAccount'),
+        desc: t('set.groupByAccount.desc'),
+        control: {
+          type: 'toggle',
+          key: 'groupArticlesByAccount',
+          defaultValue: DEFAULT_SETTINGS.groupArticlesByAccount,
+        },
       },
       {
         name: t('set.notify'),

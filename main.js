@@ -607,10 +607,13 @@ async function fetchArticle(transport, url) {
     const images = [];
     const markdown = normalizeBlocks(toMd(root, images));
     await downloadImages(transport, images);
-    return { url, title: cleanText(title), description: cleanText(description), markdown, images };
+    return { url, title: cleanText(title), description: cleanText(description), account: accountName(doc), markdown, images };
   } catch {
     return null;
   }
+}
+function accountName(doc) {
+  return doc.querySelector("#js_name")?.textContent?.trim() ?? "";
 }
 async function downloadImages(transport, images) {
   for (const img of images) {
@@ -776,6 +779,8 @@ var en = {
   "set.autoImport.desc": "Write messages into the inbox as soon as they arrive",
   "set.fetchArticles": "Fetch article info",
   "set.fetchArticles.desc": "Automatically fetch the title/summary of links in messages and create article notes",
+  "set.groupByAccount": "Group articles by account",
+  "set.groupByAccount.desc": "Store article notes in a subfolder named after the official account, with its images in an assets subfolder inside it",
   "set.notify": "Notify on message",
   "set.footer": "Note: this plugin talks to the WeChat ilink gateway directly; messages are stored only in this vault. Proactive sends are rate-limited by the gateway.",
   "login.status": "Login status",
@@ -854,6 +859,8 @@ var zh = {
   "set.autoImport.desc": "\u6536\u5230\u6D88\u606F\u540E\u7ACB\u5373\u5199\u5165\u6536\u4EF6\u7BB1",
   "set.fetchArticles": "\u6293\u53D6\u6587\u7AE0\u4FE1\u606F",
   "set.fetchArticles.desc": "\u6D88\u606F\u91CC\u7684\u94FE\u63A5\u81EA\u52A8\u6293\u53D6\u6807\u9898/\u6458\u8981\u5E76\u5EFA\u7ACB\u6587\u7AE0\u7B14\u8BB0",
+  "set.groupByAccount": "\u6309\u516C\u4F17\u53F7\u5206\u76EE\u5F55",
+  "set.groupByAccount.desc": "\u6587\u7AE0\u7B14\u8BB0\u5B58\u5165\u4EE5\u516C\u4F17\u53F7\u547D\u540D\u7684\u5B50\u76EE\u5F55,\u6587\u7AE0\u914D\u56FE\u5B58\u5230\u8BE5\u76EE\u5F55\u4E0B\u7684 assets \u5B50\u76EE\u5F55",
   "set.notify": "\u6765\u6D88\u606F\u65F6\u901A\u77E5",
   "set.footer": "\u8BF4\u660E:\u672C\u63D2\u4EF6\u76F4\u63A5\u4E0E\u5FAE\u4FE1 ilink \u7F51\u5173\u901A\u4FE1,\u6D88\u606F\u4EC5\u4FDD\u5B58\u5728\u672C vault\u3002\u4E3B\u52A8\u53D1\u9001\u53D7\u7F51\u5173\u9650\u6D41\u3002",
   "login.status": "\u767B\u5F55\u72B6\u6001",
@@ -962,16 +969,19 @@ async function importMessage(app, transport, msg, settings) {
       const info = await fetchArticle(transport, url);
       if (!info) continue;
       const title = info.title;
-      const notePath = `${settings.articleFolder}/${dayStamp(msg.timeMs)} ${sanitizeFileName(title)}.md`;
+      const accountDir = settings.groupArticlesByAccount && info.account ? `/${sanitizeFileName(info.account)}` : "";
+      const notePath = `${settings.articleFolder}${accountDir}/${dayStamp(msg.timeMs)} ${sanitizeFileName(title)}.md`;
+      const mediaFolder = `${settings.articleFolder}${accountDir}/assets`;
       try {
         if (!await app.vault.adapter.exists(notePath)) {
+          await ensureFolder(app, mediaFolder);
           const base = `${dayStamp(msg.timeMs)}_${timeOfDay(msg.timeMs).replace(":", "")}`;
           let body = info.markdown;
           for (let i = 0; i < info.images.length; i++) {
             const img = info.images[i];
             const ph = `![[img:${i}]]`;
             if (img.data) {
-              const path = `${settings.attachmentFolder}/${base}_article${i}.${img.ext}`;
+              const path = `${mediaFolder}/${base}_article${i}.${img.ext}`;
               try {
                 const ab = img.data.buffer.slice(
                   img.data.byteOffset,
@@ -1612,6 +1622,7 @@ var DEFAULT_SETTINGS = {
   articleFolder: "Wechatian/articles",
   outboxFolder: "Wechatian/outbox",
   fetchArticles: true,
+  groupArticlesByAccount: true,
   autoImport: true,
   notifyOnMessage: true
 };
@@ -1686,6 +1697,15 @@ var WechatianSettingTab = class extends import_obsidian4.PluginSettingTab {
         name: t("set.fetchArticles"),
         desc: t("set.fetchArticles.desc"),
         control: { type: "toggle", key: "fetchArticles", defaultValue: DEFAULT_SETTINGS.fetchArticles }
+      },
+      {
+        name: t("set.groupByAccount"),
+        desc: t("set.groupByAccount.desc"),
+        control: {
+          type: "toggle",
+          key: "groupArticlesByAccount",
+          defaultValue: DEFAULT_SETTINGS.groupArticlesByAccount
+        }
       },
       {
         name: t("set.notify"),
@@ -2311,7 +2331,8 @@ var WechatianPlugin = class extends import_obsidian6.Plugin {
           inboxFolder: this.settings.inboxFolder,
           attachmentFolder: this.settings.attachmentFolder,
           articleFolder: this.settings.articleFolder,
-          fetchArticles: this.settings.fetchArticles
+          fetchArticles: this.settings.fetchArticles,
+          groupArticlesByAccount: this.settings.groupArticlesByAccount
         });
       } catch (e) {
         new import_obsidian6.Notice(t("notice.importFailed", { err: String(e?.message ?? e) }));

@@ -377,6 +377,7 @@ export default class WechatianPlugin extends Plugin {
           attachmentFolder: this.settings.attachmentFolder,
           articleFolder: this.settings.articleFolder,
           fetchArticles: this.settings.fetchArticles,
+          groupArticlesByAccount: this.settings.groupArticlesByAccount,
         });
       } catch (e) {
         new Notice(t('notice.importFailed', { err: String((e as Error)?.message ?? e) }));
