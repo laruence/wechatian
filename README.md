@@ -48,7 +48,7 @@ Five steps, about five minutes:
 
 2. Scan it with WeChat and confirm — a bot contact appears in your contacts, and the plugin reports the login:
 
-   ![WeChat scan confirmation on the phone](assets/wechat-scan-confirm.png)
+   <p align="center"><img src="assets/wechat-scan-confirm.png" alt="WeChat scan confirmation on the phone" width="200"></p>
 
    !["Logged in, receiving messages" toast](assets/settings-logged-in.png)
 
@@ -60,7 +60,7 @@ Five steps, about five minutes:
 
    ![Bound settings page with test send](assets/settings-bound.png)
 
-   ![Phone view: you sent "Hello", the bot replies "Hello from wechatian"](assets/wechat-chat.png)
+   <p align="center"><img src="assets/wechat-chat.png" alt="Phone view: you sent Hello, the bot replies Hello from wechatian" width="200"></p>
 
 5. Send yourself a message from WeChat — a toast confirms it landed, and within a second it's in `<inbox>/YYYY-MM-DD.md`.
 
