@@ -1,6 +1,7 @@
 # Wechatian
 
 [![CI](https://github.com/laruence/wechatian/actions/workflows/ci.yml/badge.svg)](https://github.com/laruence/wechatian/actions/workflows/ci.yml)
+[![Obsidian downloads](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2Fobsidianmd%2Fobsidian-releases%2Fmaster%2Fcommunity-plugin-stats.json&query=%24.wechatian.downloads&label=obsidian%20downloads&color=8b5cf6)](https://community.obsidian.md/plugins/wechatian)
 
 **Your WeChat, inside your vault.**
 
