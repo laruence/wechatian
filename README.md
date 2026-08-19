@@ -4,8 +4,6 @@
 
 Wechatian is an [Obsidian](https://obsidian.md) plugin that bridges WeChat and your vault through Tencent's official **ilink** bot gateway — no unofficial protocol hacks, no self-hosted relay. Messages you receive become searchable notes; your AI assistant can WeChat you by dropping a file into a folder.
 
-![A two-way conversation with the bot on WeChat](assets/wechat-chat.png)
-
 ## Why
 
 Your most important conversations happen on WeChat — but they're trapped in the app: unsearchable, unlinkable, lost when you switch phones. Wechatian pulls them into your knowledge base:
@@ -58,9 +56,11 @@ Five steps, about five minutes:
 
    ![No send credential yet toast](assets/settings-no-credential.png)
 
-4. The settings page now shows the bound account and a live test-send box. The bridge is ready in both directions.
+4. The settings page now shows the bound account and a live test-send box. Hit **Send** — the phone that messaged the bot in step 3 receives the reply, closing the loop:
 
    ![Bound settings page with test send](assets/settings-bound.png)
+
+   ![Phone view: you sent "Hello", the bot replies "Hello from wechatian"](assets/wechat-chat.png)
 
 5. Send yourself a message from WeChat — a toast confirms it landed, and within a second it's in `<inbox>/YYYY-MM-DD.md`.
 
