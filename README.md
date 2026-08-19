@@ -85,6 +85,12 @@ Wechatian/              # inbox folder (all paths configurable)
 
 All paths are configurable in settings.
 
+### Receiving
+
+- **Messages** land in the daily note, timestamped and marked received/sent.
+- **Media** (photos, videos, files, voice) is decrypted into `attachments/` and embedded in the daily note.
+- **Article links** are fetched in full and saved as markdown notes in `articles/` — the article's own images included, which go to `attachments/`.
+
 ### Sending
 
 Write **one file** into `outbox/`. No API, no recipient — it's a one-to-one channel to your own bound WeChat:
@@ -117,7 +123,7 @@ No problem. Messages sent to the bot while you're offline are held by the gatewa
 The gateway issues the send credential only after the bound account has sent the bot at least one message. Send any message to the bot from WeChat once (step 3 above) and sending unlocks.
 
 **Does it receive images, videos, and files?**
-Yes — media arrives decrypted in `attachments/` and is embedded in the daily note. Links to articles are additionally fetched in full as markdown notes in `articles/`.
+Yes — media arrives decrypted in `attachments/` and is embedded in the daily note. Links to articles are additionally fetched in full as markdown notes in `articles/`, with the article's images saved alongside in `attachments/`.
 
 **Why didn't a forwarded article/file arrive?**
 Known gateway limitation: the bot can't receive *forwarded* articles or files. Send the original link or the file itself instead.
@@ -148,7 +154,7 @@ The plugin runs on desktop only. But the notes it writes are plain Markdown — 
 
 **Wechatian** 把微信变成 vault 的双向通道：
 
-- **收**：消息实时写入每日对话笔记（收发同一时间线）；媒体解密存 `attachments/`；链接全文抓取成 markdown 文章笔记
+- **收**：消息实时写入每日对话笔记（收发同一时间线）；媒体解密存 `attachments/`；链接全文抓取成 markdown 文章笔记存 `articles/`，文章配图一并存 `attachments/`
 - **发**：往 `outbox/` 丢文件——`.md` 作为文本消息发送（**支持 markdown**），图片/视频/文档（≤100MB）作为附件发送
 - **Agent**：插件在收件箱目录维护 `Agent.md`，AI 助手读完即学会发件协议——长任务跑完、需要拍板时主动给你发微信；完整指南见 [Agent.md](Agent.md)
 - **扫码登录**：扫一次即绑定该账号，只接收该账号的消息；路径全部可配置；界面中英双语
