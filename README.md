@@ -44,27 +44,29 @@ Five steps, about five minutes:
 
 1. Open Obsidian → Settings → Wechatian. A QR code appears in the login section.
 
-   ![QR login in the settings page](assets/settings-qr-login.png)
+   <p align="center"><img src="assets/settings-qr-login.png" alt="QR login in the settings page" width="800"><br><sub>Desktop: the settings page opens with a QR code.</sub></p>
 
 2. Scan it with WeChat and confirm — a bot contact appears in your contacts, and the plugin reports the login:
 
-   <p align="center"><img src="assets/wechat-scan-confirm.png" alt="WeChat scan confirmation on the phone" width="250"></p>
+   <p align="center"><img src="assets/wechat-scan-confirm.png" alt="WeChat scan confirmation on the phone" width="250"><br><sub>Phone: confirm the new connection.</sub></p>
 
-   !["Logged in, receiving messages" toast](assets/settings-logged-in.png)
+   <p align="center"><img src="assets/settings-logged-in.png" alt="Logged in, receiving messages toast" width="800"><br><sub>Desktop: "logged in, receiving messages".</sub></p>
 
-3. **Send any message to the bot from WeChat once.** The gateway only issues the send credential after the bound account has messaged the bot — until then, sending fails with exactly this notice:
+3. Try **Send** now and it fails — the gateway issues the send credential only after the bound account has messaged the bot:
 
-   ![No send credential yet toast](assets/settings-no-credential.png)
+   <p align="center"><img src="assets/settings-no-credential.png" alt="No send credential yet toast" width="800"><br><sub>Desktop: sending stays locked until you message the bot once.</sub></p>
 
-4. The settings page now shows the bound account and a live test-send box. Hit **Send** — the phone that messaged the bot in step 3 receives the reply, closing the loop:
+   So send the bot any message from WeChat. That one message unlocks the outbound direction.
 
-   ![Bound settings page with test send](assets/settings-bound.png)
+4. The settings page now shows the bound account. Hit **Send** again — the phone receives the reply, closing the loop:
 
-   <p align="center"><img src="assets/wechat-chat.png" alt="Phone view: you sent Hello, the bot replies Hello from wechatian" width="250"></p>
+   <p align="center"><img src="assets/settings-bound.png" alt="Bound settings page with test send" width="800"><br><sub>Desktop: bound, Test send ready.</sub></p>
 
-5. Send yourself a message from WeChat — a toast confirms it landed, and within a second it's in `<inbox>/YYYY-MM-DD.md`.
+   <p align="center"><img src="assets/wechat-chat.png" alt="Phone chat with the bot" width="250"><br><sub>Phone: you said "Hello", the bot replies.</sub></p>
 
-   ![Incoming message toast](assets/settings-message-received.png)
+5. The other direction works the same: send yourself a message from WeChat — a toast confirms it landed, and within a second it's in `<inbox>/YYYY-MM-DD.md`.
+
+   <p align="center"><img src="assets/settings-message-received.png" alt="Incoming message toast" width="800"><br><sub>Desktop: an inbound WeChat message lands.</sub></p>
 
 ## Usage
 
@@ -90,7 +92,7 @@ Write **one file** into `outbox/`. No API, no recipient — it's a one-to-one ch
 
 A "Message sent" toast confirms delivery; the message is also recorded in the daily note.
 
-![Message sent toast](assets/settings-message-sent.png)
+<p align="center"><img src="assets/settings-message-sent.png" alt="Message sent toast" width="800"><br><sub>Desktop: the outbox file was delivered.</sub></p>
 
 The plugin picks files up on its next poll (~30–60 s). Judge the result by the file:
 
