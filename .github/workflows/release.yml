@@ -1,8 +1,10 @@
 name: Release
 
 on:
-  push:
-    tags: ['[0-9]+.[0-9]+.[0-9]+']
+  # Fires when a release is created/published on GitHub (web UI or API),
+  # so the flow is: push commits -> create the release -> assets get uploaded.
+  release:
+    types: [published]
   workflow_dispatch:
     inputs:
       tag:
@@ -18,7 +20,10 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
+      # Build from the tag the release/dispatch points at, not the default branch
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.tag || github.event.release.tag_name }}
 
       - uses: actions/setup-node@v5
         with:
@@ -42,5 +47,5 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="${{ inputs.tag || github.ref_name }}"
-          gh release upload "$TAG" main.js manifest.json styles.css --clobber
+          TAG="${{ inputs.tag || github.event.release.tag_name }}"
+          gh release upload "$TAG" main.js manifest.json styles.css versions.json --clobber
