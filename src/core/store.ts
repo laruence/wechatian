@@ -1,4 +1,4 @@
-/** Runtime state persistence: token / cursor / context_token / quota (stored in state.json inside the plugin data dir) */
+/** Runtime state persistence: token / cursor / context_token / quota (state.json in the plugin data dir) */
 import type { App } from 'obsidian';
 
 export interface BotState {
@@ -20,10 +20,14 @@ const DEDUP_KEEP = 500;
 export class StateStore {
   private state: BotState;
   private saveTimer: number | null = null;
+  /** last save error, so a persistent failure is logged once instead of every retry */
+  private saveError: string | null = null;
 
   constructor(
     private app: App,
     private file: string,
+    /** pre-0.1.4 location, migrated on first read if the new file is absent */
+    private legacyFile?: string,
   ) {
     this.state = this.load();
   }
@@ -50,13 +54,18 @@ export class StateStore {
 
   /** adapter reads are async; await once at plugin startup */
   async init(): Promise<void> {
-    try {
-      if (await this.app.vault.adapter.exists(this.file)) {
-        const raw = await this.app.vault.adapter.read(this.file);
-        this.state = { ...this.emptyState(), ...(JSON.parse(raw) as Partial<BotState>) };
+    for (const path of [this.file, this.legacyFile]) {
+      if (!path) break;
+      try {
+        if (await this.app.vault.adapter.exists(path)) {
+          const raw = await this.app.vault.adapter.read(path);
+          this.state = { ...this.emptyState(), ...(JSON.parse(raw) as Partial<BotState>) };
+          return; // a legacy state.json is read as-is; the next save writes it to the new location
+        }
+      } catch (e) {
+        /* corrupted state: fall back to an empty one, but say so */
+        console.warn(`wechatian: failed to read state from ${path}:`, e);
       }
-    } catch {
-      /* fall back to empty state when the stored state is corrupted */
     }
   }
 
@@ -84,8 +93,15 @@ export class StateStore {
     }
     try {
       await this.app.vault.adapter.write(this.file, JSON.stringify(this.state));
-    } catch {
-      /* retry on next write */
+      this.saveError = null;
+    } catch (e) {
+      // Never swallow this silently again: a failed write means the binding is
+      // memory-only and the user will be asked to re-scan on the next start.
+      const msg = String((e as Error)?.message ?? e);
+      if (msg !== this.saveError) {
+        this.saveError = msg;
+        console.error(`wechatian: cannot persist state to ${this.file}: ${msg}`);
+      }
     }
   }
 

@@ -13,7 +13,10 @@ import { Outbox } from './outbox';
 import { CDN_BASE, ILINK_DEFAULT_BASE } from './core/constants';
 import { applyLanguage, resolvedLanguage, t, type UiLanguage } from './i18n';
 
-const STATE_FILE = '.wechatian-plugin/state.json';
+/** Pre-0.1.4 location; kept so an existing binding survives the move (the old
+ * path lived in the vault root and was never auto-created, so writes silently
+ * failed on fresh installs) */
+const LEGACY_STATE_FILE = '.wechatian-plugin/state.json';
 
 type ConnState = 'disconnected' | 'connecting' | 'connected' | 'expired' | 'error';
 
@@ -34,7 +37,10 @@ export default class WechatianPlugin extends Plugin {
   async onload(): Promise<void> {
     await this.loadSettings();
     applyLanguage(this.settings.language); // respect the saved choice; 'system' follows Obsidian
-    this.store = new StateStore(this.app, STATE_FILE);
+    // State lives inside the plugin's own folder: that directory always exists
+    // once the plugin is installed, so the write can never fail on a missing parent
+    const stateDir = this.manifest.dir ?? `${this.app.vault.configDir}/plugins/${this.manifest.id}`;
+    this.store = new StateStore(this.app, `${stateDir}/state.json`, LEGACY_STATE_FILE);
     await this.store.init();
     this.outbox = new Outbox(this.app);
     await this.ensureFolders();

@@ -504,13 +504,16 @@ var ObsidianTransport = class {
 // src/core/store.ts
 var DEDUP_KEEP = 500;
 var StateStore = class {
-  constructor(app, file) {
+  constructor(app, file, legacyFile) {
     this.app = app;
     this.file = file;
+    this.legacyFile = legacyFile;
     this.state = this.load();
   }
   state;
   saveTimer = null;
+  /** last save error, so a persistent failure is logged once instead of every retry */
+  saveError = null;
   emptyState() {
     return {
       token: "",
@@ -531,12 +534,17 @@ var StateStore = class {
   }
   /** adapter reads are async; await once at plugin startup */
   async init() {
-    try {
-      if (await this.app.vault.adapter.exists(this.file)) {
-        const raw = await this.app.vault.adapter.read(this.file);
-        this.state = { ...this.emptyState(), ...JSON.parse(raw) };
+    for (const path of [this.file, this.legacyFile]) {
+      if (!path) break;
+      try {
+        if (await this.app.vault.adapter.exists(path)) {
+          const raw = await this.app.vault.adapter.read(path);
+          this.state = { ...this.emptyState(), ...JSON.parse(raw) };
+          return;
+        }
+      } catch (e) {
+        console.warn(`wechatian: failed to read state from ${path}:`, e);
       }
-    } catch {
     }
   }
   get() {
@@ -559,7 +567,13 @@ var StateStore = class {
     }
     try {
       await this.app.vault.adapter.write(this.file, JSON.stringify(this.state));
-    } catch {
+      this.saveError = null;
+    } catch (e) {
+      const msg = String(e?.message ?? e);
+      if (msg !== this.saveError) {
+        this.saveError = msg;
+        console.error(`wechatian: cannot persist state to ${this.file}: ${msg}`);
+      }
     }
   }
   /** Message dedup: returns true if this key was already seen */
@@ -2025,7 +2039,7 @@ var ILINK_DEFAULT_BASE = "https://ilinkai.weixin.qq.com";
 var CDN_BASE = "https://novac2c.cdn.weixin.qq.com/c2c";
 
 // src/main.ts
-var STATE_FILE = ".wechatian-plugin/state.json";
+var LEGACY_STATE_FILE = ".wechatian-plugin/state.json";
 var WechatianPlugin = class extends import_obsidian6.Plugin {
   settings = DEFAULT_SETTINGS;
   store;
@@ -2042,7 +2056,8 @@ var WechatianPlugin = class extends import_obsidian6.Plugin {
   async onload() {
     await this.loadSettings();
     applyLanguage(this.settings.language);
-    this.store = new StateStore(this.app, STATE_FILE);
+    const stateDir = this.manifest.dir ?? `${this.app.vault.configDir}/plugins/${this.manifest.id}`;
+    this.store = new StateStore(this.app, `${stateDir}/state.json`, LEGACY_STATE_FILE);
     await this.store.init();
     this.outbox = new Outbox(this.app);
     await this.ensureFolders();
