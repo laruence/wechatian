@@ -46,6 +46,8 @@ jobs:
       - name: Upload release assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # versions.json lives at the repo root only (Obsidian reads it via raw URL);
+        # putting it in the release assets makes Obsidian flag the release as unsupported.
         run: |
           TAG="${{ inputs.tag || github.event.release.tag_name }}"
-          gh release upload "$TAG" main.js manifest.json styles.css versions.json --clobber
+          gh release upload "$TAG" main.js manifest.json styles.css --clobber
