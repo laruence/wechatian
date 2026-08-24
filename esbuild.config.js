@@ -5,7 +5,7 @@ const path = require('path');
 const watch = process.argv.includes('--watch');
 
 /** 运行时由 Obsidian(Electron)提供的模块,保持 external */
-const external = ['obsidian', 'electron', 'crypto', 'path', 'fs', 'buffer'];
+const external = ['obsidian', 'electron', 'crypto', 'path', 'fs', 'buffer', 'http', 'https'];
 
 async function build() {
   const opts = {

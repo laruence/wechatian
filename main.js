@@ -1,7 +1,9 @@
 "use strict";
+var __create = Object.create;
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
+var __getProtoOf = Object.getPrototypeOf;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
 var __export = (target, all) => {
   for (var name in all)
@@ -15,6 +17,14 @@ var __copyProps = (to, from, except, desc) => {
   }
   return to;
 };
+var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
+  // If the importer is in node compatibility mode or this is not an ESM
+  // file that has been converted to a CommonJS file using a Babel-
+  // compatible transform (i.e. "__esModule" has not been set), then set
+  // "default" to the CommonJS "module.exports" for node compatibility.
+  isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
+  mod
+));
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
 // src/main.ts
@@ -500,6 +510,103 @@ var ObsidianTransport = class {
     }
   }
 };
+
+// src/core/transport-node.ts
+var http = __toESM(require("http"));
+var https = __toESM(require("https"));
+var MAX_REDIRECTS = 5;
+var NodeTransport = class {
+  async get(url, headers, timeoutMs) {
+    return this.request("GET", url, headers, void 0, timeoutMs, 0);
+  }
+  async post(url, headers, body, timeoutMs) {
+    return this.request("POST", url, headers, body, timeoutMs, 0);
+  }
+  request(method, url, headers, body, timeoutMs, redirects) {
+    return new Promise((resolve, reject) => {
+      let parsed;
+      try {
+        parsed = new URL(url);
+      } catch {
+        reject(new HttpError(`invalid url: ${url}`));
+        return;
+      }
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+        reject(new HttpError(`unsupported protocol: ${parsed.protocol}`));
+        return;
+      }
+      const mod = parsed.protocol === "http:" ? http : https;
+      let settled = false;
+      let deadline;
+      const arm = () => {
+        if (deadline) window.clearTimeout(deadline);
+        deadline = window.setTimeout(() => {
+          req.destroy(new HttpError("request timeout", 0, true));
+        }, timeoutMs);
+      };
+      const settle = (fn) => {
+        if (settled) return;
+        settled = true;
+        if (deadline) window.clearTimeout(deadline);
+        fn();
+      };
+      arm();
+      const req = mod.request(
+        parsed,
+        { method, headers, timeout: timeoutMs },
+        (res) => {
+          const status = res.statusCode ?? 0;
+          if ([301, 302, 303, 307, 308].includes(status) && redirects < MAX_REDIRECTS) {
+            const loc = res.headers.location;
+            res.resume();
+            if (loc) {
+              settled = true;
+              window.clearTimeout(deadline);
+              const nextMethod = method === "POST" && status !== 307 && status !== 308 ? "GET" : method;
+              const nextBody = nextMethod === "GET" ? void 0 : body;
+              this.request(nextMethod, new URL(loc, parsed).toString(), headers, nextBody, timeoutMs, redirects + 1).then(
+                resolve,
+                reject
+              );
+              return;
+            }
+          }
+          const chunks = [];
+          res.on("data", (c) => {
+            arm();
+            chunks.push(c);
+          });
+          res.on("error", (e) => settle(() => reject(new HttpError(String(e?.message ?? e), status))));
+          res.on("end", () => {
+            settle(() => {
+              const buf = Buffer.concat(chunks);
+              const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+              resolve({ status, body: ab, headers: flatHeaders(res.headers) });
+            });
+          });
+        }
+      );
+      req.on("timeout", () => req.destroy(new HttpError("request timeout", 0, true)));
+      req.on("error", (e) => {
+        settle(() => {
+          if (e instanceof HttpError) reject(e);
+          const msg = String(e?.message ?? e);
+          reject(new HttpError(msg, 0, /timeout|timed out|ECONNRESET|ETIMEDOUT|ECONNREFUSED|abort/i.test(msg)));
+        });
+      });
+      if (body !== void 0) req.write(Buffer.from(body instanceof ArrayBuffer ? new Uint8Array(body) : body));
+      req.end();
+    });
+  }
+};
+function flatHeaders(h) {
+  const out = {};
+  for (const [k, v] of Object.entries(h)) {
+    if (v === void 0) continue;
+    out[k.toLowerCase()] = Array.isArray(v) ? v.join(", ") : v;
+  }
+  return out;
+}
 
 // src/core/store.ts
 var DEDUP_KEEP = 500;
@@ -2045,6 +2152,9 @@ var WechatianPlugin = class extends import_obsidian6.Plugin {
   store;
   client = null;
   transport = new ObsidianTransport();
+  /** article/image fetches run on Node's http stack: requestUrl's IPC channel has no
+   *  timeout/cancel and can wedge the app on misbehaving hosts (issue #1) */
+  articleTransport = new NodeTransport();
   polling = false;
   stopRequested = false;
   connState = "disconnected";
@@ -2342,7 +2452,7 @@ var WechatianPlugin = class extends import_obsidian6.Plugin {
     }
     if (this.settings.autoImport) {
       try {
-        await importMessage(this.app, this.transport, msg, {
+        await importMessage(this.app, this.articleTransport, msg, {
           inboxFolder: this.settings.inboxFolder,
           attachmentFolder: this.settings.attachmentFolder,
           articleFolder: this.settings.articleFolder,
