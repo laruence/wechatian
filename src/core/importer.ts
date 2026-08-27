@@ -134,7 +134,7 @@ export async function importMessage(
             '',
           ].join('\n');
           await app.vault.create(notePath, note);
-          result.articleAssets.push({ note: notePath, assetsDir: mediaFolder, assetCount: savedAssets });
+          result.articleAssets.push({ title, note: notePath, assetsDir: mediaFolder, assetCount: savedAssets });
         }
         display = display.split(url).join(`[[${notePath.replace(/\.md$/, '')}|${title}]]`);
       } catch {

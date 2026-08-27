@@ -276,14 +276,34 @@ test('buildReceiptReplies: pipes in paths are escaped inside the table', () => {
   assert.ok(lines.includes('| a\\|b.jpg | Wechatian/attachments/a\\|b.jpg |'));
 });
 
-test('buildReceiptReplies: article note path + subdued assets line', () => {
+test('buildReceiptReplies: article rows join the table — title | note path, assets line subdued', () => {
   applyLanguage('zh');
   const saved = buildReceiptReplies([
-    { ...RECEIPT_OK, articleAssets: [{ note: 'Wechatian/articles/2026-08-27 Foo.md', assetsDir: 'Wechatian/articles/assets', assetCount: 3 }], linkCount: 1 },
+    { ...RECEIPT_OK, articleAssets: [{ title: 'Foo', note: 'Wechatian/articles/2026-08-27 Foo.md', assetsDir: 'Wechatian/articles/assets', assetCount: 3 }], linkCount: 1 },
   ]);
-  assert.deepEqual(saved, ['**文章已保存** Wechatian/articles/2026-08-27 Foo.md', '<small>3 张配图,保存在 Wechatian/articles/assets</small>']);
-  const noAssets = buildReceiptReplies([{ ...RECEIPT_OK, articleAssets: [{ note: 'N.md', assetsDir: 'D', assetCount: 0 }], linkCount: 1 }]);
-  assert.deepEqual(noAssets, ['**文章已保存** N.md']);
+  assert.deepEqual(saved, [
+    '| 文件 | 保存位置 |',
+    '| --- | --- |',
+    '| Foo | Wechatian/articles/2026-08-27 Foo.md |',
+    '| <small>3 张配图,保存在 Wechatian/articles/assets</small> | |',
+  ]);
+  const noAssets = buildReceiptReplies([{ ...RECEIPT_OK, articleAssets: [{ title: 'T', note: 'N.md', assetsDir: 'D', assetCount: 0 }], linkCount: 1 }]);
+  assert.deepEqual(noAssets, ['| 文件 | 保存位置 |', '| --- | --- |', '| T | N.md |']);
+});
+
+test('buildReceiptReplies: files and articles share one table', () => {
+  applyLanguage('en');
+  const lines = buildReceiptReplies([
+    { ...RECEIPT_OK, attachmentPaths: ['Wechatian/attachments/a.jpg'] },
+    { ...RECEIPT_OK, articleAssets: [{ title: 'Bar', note: 'Wechatian/articles/Bar.md', assetsDir: 'D', assetCount: 2 }], linkCount: 1 },
+  ]);
+  assert.deepEqual(lines, [
+    '| File | Saved to |',
+    '| --- | --- |',
+    '| a.jpg | Wechatian/attachments/a.jpg |',
+    '| Bar | Wechatian/articles/Bar.md |',
+    '| <small>2 image(s) attached, saved to D</small> | |',
+  ]);
 });
 
 test('buildReceiptReplies: link present but article fetch failed', () => {

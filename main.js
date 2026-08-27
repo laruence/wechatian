@@ -1232,8 +1232,10 @@ function buildReceiptReplies(results) {
       failed.push(t("reply.attachFailed", { name: r.attachmentFailures.join(", ") }));
     }
     for (const a of r.articleAssets) {
-      out.push(`${t("reply.article")} ${a.note}`);
-      if (a.assetCount > 0) out.push(small(t("reply.article.assets", { n: a.assetCount, dir: a.assetsDir })));
+      table.push(`| ${cell(a.title)} | ${cell(a.note)} |`);
+      if (a.assetCount > 0) {
+        table.push(`| ${small(t("reply.article.assets", { n: a.assetCount, dir: a.assetsDir }))} | |`);
+      }
     }
     if (!r.attachmentPaths.length && !r.attachmentFailures.length && r.linkCount && !r.articleAssets.length) {
       out.push(t("reply.articleFailed"));
@@ -1339,7 +1341,7 @@ async function importMessage(app, transport, msg, settings) {
             ""
           ].join("\n");
           await app.vault.create(notePath, note);
-          result.articleAssets.push({ note: notePath, assetsDir: mediaFolder, assetCount: savedAssets });
+          result.articleAssets.push({ title, note: notePath, assetsDir: mediaFolder, assetCount: savedAssets });
         }
         display = display.split(url).join(`[[${notePath.replace(/\.md$/, "")}|${title}]]`);
       } catch {

@@ -430,16 +430,17 @@ const cell = (s: string) => s.replace(/\|/g, '\\|');
 /**
  * Assemble the confirmation reply for every message recorded in one polling
  * round. All messages from the same sender go back as ONE WeChat message:
- * saved files/images share a single table (File | Saved to), each article
- * gets its note path plus a subdued line for the downloaded images, and a
- * plain message just confirms the daily note it landed in.
+ * saved files/images and saved articles share a single markdown table —
+ * the first column is the file name or article title, the second column is
+ * where it was saved. An article occupies two rows: its note path, then a
+ * subdued row for the downloaded images (count + directory).
  * Pure function so the logic is unit-testable.
  */
 export function buildReceiptReplies(results: ReceiptReplyInput[]): string[] {
   const small = (s: string) => `<small>${s}</small>`;
   const out: string[] = [];
   const failed: string[] = [];
-  // attachments from every message in the round share one table
+  // files, images and articles from every message in the round share one table
   const table: string[] = [];
   for (const r of results) {
     if (!r.ok) {
@@ -454,8 +455,10 @@ export function buildReceiptReplies(results: ReceiptReplyInput[]): string[] {
       failed.push(t('reply.attachFailed', { name: r.attachmentFailures.join(', ') }));
     }
     for (const a of r.articleAssets) {
-      out.push(`${t('reply.article')} ${a.note}`);
-      if (a.assetCount > 0) out.push(small(t('reply.article.assets', { n: a.assetCount, dir: a.assetsDir })));
+      table.push(`| ${cell(a.title)} | ${cell(a.note)} |`);
+      if (a.assetCount > 0) {
+        table.push(`| ${small(t('reply.article.assets', { n: a.assetCount, dir: a.assetsDir }))} | |`);
+      }
     }
     if (!r.attachmentPaths.length && !r.attachmentFailures.length && r.linkCount && !r.articleAssets.length) {
       out.push(t('reply.articleFailed'));
