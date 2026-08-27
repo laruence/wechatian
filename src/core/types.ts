@@ -100,3 +100,12 @@ export interface OutboundAttachment {
   name: string;
   data: Uint8Array;
 }
+
+/** One saved article: the note path plus the directory holding its images */
+export interface ArticleAsset {
+  note: string;
+  /** folder the article's downloaded images were saved into (no trailing slash) */
+  assetsDir: string;
+  /** number of images downloaded with the article */
+  assetCount: number;
+}

@@ -12,7 +12,7 @@ import { DEFAULT_SETTINGS, WechatianSettings, WechatianSettingTab } from './sett
 import { QrLoginModal } from './qr-modal';
 import { Outbox } from './outbox';
 import { CDN_BASE, ILINK_DEFAULT_BASE } from './core/constants';
-import { applyLanguage, buildReceiptReply, buildSendFailure, resolvedLanguage, t, type UiLanguage } from './i18n';
+import { applyLanguage, buildReceiptReplies, buildSendFailure, resolvedLanguage, t, type ReceiptReplyInput, type UiLanguage } from './i18n';
 
 /** Pre-0.1.4 location; kept so an existing binding survives the move (the old
  * path lived in the vault root and was never auto-created, so writes silently
@@ -332,8 +332,13 @@ export default class WechatianPlugin extends Plugin {
         });
       }
 
+      const receipts: ReceiptReplyInput[] = [];
       for (const msg of result.messages) {
-        await this.handleInbound(msg);
+        receipts.push(...(await this.handleInbound(msg)));
+      }
+      // one batched receipt reply per polling round, not one per message
+      if (receipts.length) {
+        await this.sendReceiptReplies(receipts);
       }
 
       // Consume the outbox (pending-send files written by agents)
@@ -354,19 +359,19 @@ export default class WechatianPlugin extends Plugin {
     this.polling = false;
   }
 
-  /** Handle a single inbound message */
-  private async handleInbound(msg: InboundMessage): Promise<void> {
+  /** Handle a single inbound message; returns a receipt entry when one should be sent */
+  private async handleInbound(msg: InboundMessage): Promise<ReceiptReplyInput[]> {
     const store = this.store;
-    if (!store) return;
+    if (!store) return [];
 
     // Only accept messages from the account that scanned to bind the bot.
     // Without this, anyone who discovers the bot ID could write into the vault.
     const scanned = store.get().scannedUser.trim();
-    if (scanned && msg.from !== scanned) return;
+    if (scanned && msg.from !== scanned) return [];
 
     // dedup
     const key = `${msg.from}|${msg.messageId}|${msg.timeMs}`;
-    if (store.seen(key)) return;
+    if (store.seen(key)) return [];
 
     // cache the context_token (credential for replying)
     const tok = (msg.raw.context_token ?? '').trim();
@@ -395,38 +400,41 @@ export default class WechatianPlugin extends Plugin {
         new Notice(t('notice.importFailed', { err: String((e as Error)?.message ?? e) }));
       }
       if (this.settings.autoReply) {
-        await this.sendReceiptReply(msg.from, result);
+        return [
+          result
+            ? {
+                ok: true,
+                appended: result.appended,
+                dailyNote: result.dailyNote,
+                attachmentPaths: result.attachmentPaths,
+                attachmentFailures: result.attachmentFailures,
+                linkCount: result.linkCount,
+                articleAssets: result.articleAssets,
+              }
+            : { ok: false, appended: false, dailyNote: '', attachmentPaths: [], attachmentFailures: [], linkCount: 0, articleAssets: [] },
+        ];
       }
     }
+    return [];
   }
 
   /**
-   * Confirmation reply sent right after an inbound message has been recorded:
-   * images/files report their saved path, articles report the note path (or a
-   * fetch failure), plain text confirms the daily note the entry landed in.
-   * Failures here must never break the receive flow.
+   * One batched confirmation reply per polling round: saved files/images in a
+   * table, articles with their note path and image directory, plain messages
+   * with the daily note they landed in. Failures never break the receive flow.
    */
-  private async sendReceiptReply(from: string, result: ImportResult | null): Promise<void> {
+  private async sendReceiptReplies(receipts: ReceiptReplyInput[]): Promise<void> {
     try {
+      const to = this.store.get().scannedUser.trim();
+      if (!to) return;
       const client = this.client ?? this.makeClient();
-      const contextToken = this.store.get().contextTokens[from] ?? '';
-      const lines = buildReceiptReply(
-        result
-          ? {
-              ok: true,
-              appended: result.appended,
-              dailyNote: result.dailyNote,
-              attachmentPaths: result.attachmentPaths,
-              attachmentFailures: result.attachmentFailures,
-              linkCount: result.linkCount,
-              articleNotes: result.articleNotes,
-            }
-          : { ok: false, appended: false, dailyNote: '', attachmentPaths: [], attachmentFailures: [], linkCount: 0, articleNotes: [] },
-      );
+      const contextToken = this.store.get().contextTokens[to] ?? '';
+      const lines = buildReceiptReplies(receipts);
+      if (!lines.length) return;
 
-      const res = await client.sendText(from, lines.join('\n'), contextToken);
+      const res = await client.sendText(to, lines.join('\n'), contextToken);
       if (res.ok) {
-        await appendOutbound(this.app, this.settings.inboxFolder, Date.now(), from, [
+        await appendOutbound(this.app, this.settings.inboxFolder, Date.now(), to, [
           `**${timeOfDay(Date.now())}** · ${t('importer.sent')}`,
           '',
           ...quoteBlock(lines.join('\n')),

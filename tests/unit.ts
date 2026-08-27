@@ -16,7 +16,7 @@ import {
   applyLanguage,
   resolvedLanguage,
   t,
-  buildReceiptReply,
+  buildReceiptReplies,
   buildSendFailure,
   classifySendFailure,
   dictionaries,
@@ -225,58 +225,79 @@ test('applyLanguage / resolvedLanguage / t', () => {
 
 /* ------------------------------------------------- receipt reply assembly */
 
-const RECEIPT_OK = { ok: true, appended: true, dailyNote: 'Wechatian/2026-08-27.md', attachmentPaths: [], attachmentFailures: [], linkCount: 0, articleNotes: [] };
+const RECEIPT_OK = { ok: true, appended: true, dailyNote: 'Wechatian/2026-08-27.md', attachmentPaths: [], attachmentFailures: [], linkCount: 0, articleAssets: [] };
 
-test('buildReceiptReply: plain text records the daily note path', () => {
+test('buildReceiptReplies: plain text records the daily note path', () => {
   applyLanguage('zh');
-  assert.deepEqual(buildReceiptReply(RECEIPT_OK), ['**收到**', '<small>Wechatian/2026-08-27.md</small>']);
+  assert.deepEqual(buildReceiptReplies([RECEIPT_OK]), ['**收到** <small>Wechatian/2026-08-27.md</small>']);
 });
 
-test('buildReceiptReply: append failure falls back to plain received', () => {
+test('buildReceiptReplies: append failure falls back to plain received', () => {
   applyLanguage('zh');
-  assert.deepEqual(buildReceiptReply({ ...RECEIPT_OK, appended: false }), ['**收到**']);
+  assert.deepEqual(buildReceiptReplies([{ ...RECEIPT_OK, appended: false }]), ['**收到**']);
 });
 
-test('buildReceiptReply: import failure', () => {
+test('buildReceiptReplies: import failure', () => {
   applyLanguage('zh');
-  const lines = buildReceiptReply({ ok: false, appended: false, dailyNote: '', attachmentPaths: [], attachmentFailures: [], linkCount: 0, articleNotes: [] });
+  const lines = buildReceiptReplies([{ ok: false, appended: false, dailyNote: '', attachmentPaths: [], attachmentFailures: [], linkCount: 0, articleAssets: [] }]);
   assert.deepEqual(lines, ['消息已收到,但写入 vault 失败。']);
 });
 
-test('buildReceiptReply: images + extra paths', () => {
+test('buildReceiptReplies: attachments become a File | Saved-to table', () => {
   applyLanguage('zh');
-  const lines = buildReceiptReply({
-    ...RECEIPT_OK,
-    attachmentPaths: ['Wechatian/attachments/a.jpg', 'Wechatian/attachments/b.png'],
-  });
-  assert.equal(lines.length, 3);
-  assert.equal(lines[0], '**已收到图片**');
-  assert.equal(lines[1], '<small>Wechatian/attachments/a.jpg</small>');
-  assert.equal(lines[2], '<small>Wechatian/attachments/b.png</small>');
+  const lines = buildReceiptReplies([
+    { ...RECEIPT_OK, attachmentPaths: ['Wechatian/attachments/2026-08-27_1430_a.jpg', 'Wechatian/attachments/2026-08-27_1430_doc.pdf'] },
+  ]);
+  assert.deepEqual(lines, [
+    '| 文件 | 保存位置 |',
+    '| --- | --- |',
+    '| 2026-08-27_1430_a.jpg | Wechatian/attachments/2026-08-27_1430_a.jpg |',
+    '| 2026-08-27_1430_doc.pdf | Wechatian/attachments/2026-08-27_1430_doc.pdf |',
+  ]);
 });
 
-test('buildReceiptReply: non-image attachments use the file wording', () => {
+test('buildReceiptReplies: multiple messages merge attachments into one table', () => {
   applyLanguage('zh');
-  const lines = buildReceiptReply({ ...RECEIPT_OK, attachmentPaths: ['Wechatian/attachments/doc.pdf'] });
-  assert.equal(lines[0], '**已收到文件**');
-  assert.ok(lines[1].includes('doc.pdf'));
+  const lines = buildReceiptReplies([
+    { ...RECEIPT_OK, attachmentPaths: ['Wechatian/attachments/a.jpg'] },
+    { ...RECEIPT_OK, attachmentPaths: ['Wechatian/attachments/b.pdf'] },
+  ]);
+  assert.deepEqual(lines, [
+    '| 文件 | 保存位置 |',
+    '| --- | --- |',
+    '| a.jpg | Wechatian/attachments/a.jpg |',
+    '| b.pdf | Wechatian/attachments/b.pdf |',
+  ]);
 });
 
-test('buildReceiptReply: article saved vs fetch failed', () => {
+test('buildReceiptReplies: pipes in paths are escaped inside the table', () => {
+  applyLanguage('en');
+  const lines = buildReceiptReplies([{ ...RECEIPT_OK, attachmentPaths: ['Wechatian/attachments/a|b.jpg'] }]);
+  assert.ok(lines.includes('| a\\|b.jpg | Wechatian/attachments/a\\|b.jpg |'));
+});
+
+test('buildReceiptReplies: article note path + subdued assets line', () => {
   applyLanguage('zh');
-  const saved = buildReceiptReply({ ...RECEIPT_OK, articleNotes: ['Wechatian/articles/2026-08-27 Foo.md'], linkCount: 1 });
-  assert.equal(saved[0], '**文章已保存**');
-  assert.equal(saved[1], '<small>Wechatian/articles/2026-08-27 Foo.md</small>');
-  const failed = buildReceiptReply({ ...RECEIPT_OK, linkCount: 2 });
+  const saved = buildReceiptReplies([
+    { ...RECEIPT_OK, articleAssets: [{ note: 'Wechatian/articles/2026-08-27 Foo.md', assetsDir: 'Wechatian/articles/assets', assetCount: 3 }], linkCount: 1 },
+  ]);
+  assert.deepEqual(saved, ['**文章已保存** Wechatian/articles/2026-08-27 Foo.md', '<small>3 张配图,保存在 Wechatian/articles/assets</small>']);
+  const noAssets = buildReceiptReplies([{ ...RECEIPT_OK, articleAssets: [{ note: 'N.md', assetsDir: 'D', assetCount: 0 }], linkCount: 1 }]);
+  assert.deepEqual(noAssets, ['**文章已保存** N.md']);
+});
+
+test('buildReceiptReplies: link present but article fetch failed', () => {
+  applyLanguage('zh');
+  const failed = buildReceiptReplies([{ ...RECEIPT_OK, linkCount: 2 }]);
   assert.deepEqual(failed, ['收到链接,但文章抓取失败。']);
 });
 
-test('buildReceiptReply follows the active language', () => {
+test('buildReceiptReplies follows the active language', () => {
   applyLanguage('tw');
-  const lines = buildReceiptReply({ ...RECEIPT_OK, attachmentPaths: ['Wechatian/attachments/a.jpg'] });
-  assert.ok(lines[0].includes('已收到圖片'));
+  const lines = buildReceiptReplies([{ ...RECEIPT_OK, attachmentPaths: ['Wechatian/attachments/a.jpg'] }]);
+  assert.ok(lines[0].includes('檔案'));
   applyLanguage('en');
-  const enLines = buildReceiptReply(RECEIPT_OK);
+  const enLines = buildReceiptReplies([RECEIPT_OK]);
   assert.ok(enLines[0].startsWith('**Received'));
 });
 

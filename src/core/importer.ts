@@ -1,7 +1,7 @@
 /** Import messages into the vault: daily conversation note + attachment storage + article notes */
 import type { App } from 'obsidian';
 import { TFolder } from 'obsidian';
-import type { InboundMessage } from './types';
+import type { ArticleAsset, InboundMessage } from './types';
 import type { HttpTransport } from './http';
 import { extractLinks, fetchArticle, type HtmlParser } from './article';
 import { t } from '../i18n';
@@ -18,7 +18,7 @@ export interface ImportSettings {
 export interface ImportResult {
   appended: boolean;
   dailyNote: string; // path of the daily conversation note the entry was appended to
-  articleNotes: string[];
+  articleAssets: ArticleAsset[]; // saved article notes with the directory holding their images
   attachmentPaths: string[]; // vault paths of successfully saved attachments
   attachmentFailures: string[]; // names of attachments that failed to save
   linkCount: number; // links found in the message text (regardless of fetching)
@@ -67,7 +67,7 @@ export async function importMessage(
   const result: ImportResult = {
     appended: false,
     dailyNote: '',
-    articleNotes: [],
+    articleAssets: [],
     attachmentPaths: [],
     attachmentFailures: [],
     linkCount: 0,
@@ -101,6 +101,7 @@ export async function importMessage(
           // store downloaded images next to the other media, then resolve placeholders
           const base = `${dayStamp(msg.timeMs)}_${timeOfDay(msg.timeMs).replace(':', '')}`;
           let body = info.markdown;
+          let savedAssets = 0;
           for (let i = 0; i < info.images.length; i++) {
             const img = info.images[i];
             const ph = `![[img:${i}]]`;
@@ -112,6 +113,7 @@ export async function importMessage(
                   img.data.byteOffset + img.data.byteLength,
                 ) as ArrayBuffer;
                 await app.vault.adapter.writeBinary(path, ab);
+                savedAssets++;
                 body = body.split(ph).join(`![[${path}]]`);
                 continue;
               } catch {
@@ -132,7 +134,7 @@ export async function importMessage(
             '',
           ].join('\n');
           await app.vault.create(notePath, note);
-          result.articleNotes.push(notePath);
+          result.articleAssets.push({ note: notePath, assetsDir: mediaFolder, assetCount: savedAssets });
         }
         display = display.split(url).join(`[[${notePath.replace(/\.md$/, '')}|${title}]]`);
       } catch {

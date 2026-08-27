@@ -946,9 +946,10 @@ var en = {
   "sendTest.needFirstMessage": "No send credential yet \u2014 send any message to the bot from WeChat first, then retry",
   "reply.received": "**Received**",
   "reply.recorded": "**Received**",
-  "reply.image": "**Image received**",
-  "reply.file": "**File received**",
+  "reply.table.file": "File",
+  "reply.table.location": "Saved to",
   "reply.article": "**Article saved**",
+  "reply.article.assets": "{{n}} image(s) attached, saved to {{dir}}",
   "reply.articleFailed": "Link received, but fetching the article failed.",
   "reply.attachFailed": "Failed to save attachment: {{name}}",
   "reply.recordFailed": "Message received, but recording it to the vault failed.",
@@ -1046,9 +1047,10 @@ var zh = {
   "sendTest.needFirstMessage": "\u8FD8\u6CA1\u6709\u53D1\u9001\u51ED\u636E\u2014\u2014\u8BF7\u5148\u4ECE\u5FAE\u4FE1\u7ED9\u673A\u5668\u4EBA\u53D1\u4E00\u6761\u6D88\u606F,\u518D\u91CD\u8BD5",
   "reply.received": "**\u6536\u5230**",
   "reply.recorded": "**\u6536\u5230**",
-  "reply.image": "**\u5DF2\u6536\u5230\u56FE\u7247**",
-  "reply.file": "**\u5DF2\u6536\u5230\u6587\u4EF6**",
+  "reply.table.file": "\u6587\u4EF6",
+  "reply.table.location": "\u4FDD\u5B58\u4F4D\u7F6E",
   "reply.article": "**\u6587\u7AE0\u5DF2\u4FDD\u5B58**",
+  "reply.article.assets": "{{n}} \u5F20\u914D\u56FE,\u4FDD\u5B58\u5728 {{dir}}",
   "reply.articleFailed": "\u6536\u5230\u94FE\u63A5,\u4F46\u6587\u7AE0\u6293\u53D6\u5931\u8D25\u3002",
   "reply.attachFailed": "\u9644\u4EF6\u4FDD\u5B58\u5931\u8D25: {{name}}",
   "reply.recordFailed": "\u6D88\u606F\u5DF2\u6536\u5230,\u4F46\u5199\u5165 vault \u5931\u8D25\u3002",
@@ -1146,9 +1148,10 @@ var tw = {
   "sendTest.needFirstMessage": "\u9084\u6C92\u6709\u767C\u9001\u6191\u8B49\u2014\u2014\u8ACB\u5148\u5F9E\u5FAE\u4FE1\u7D66\u6A5F\u5668\u4EBA\u767C\u4E00\u689D\u8A0A\u606F,\u518D\u91CD\u8A66",
   "reply.received": "**\u6536\u5230**",
   "reply.recorded": "**\u6536\u5230**",
-  "reply.image": "**\u5DF2\u6536\u5230\u5716\u7247**",
-  "reply.file": "**\u5DF2\u6536\u5230\u6A94\u6848**",
+  "reply.table.file": "\u6A94\u6848",
+  "reply.table.location": "\u5132\u5B58\u4F4D\u7F6E",
   "reply.article": "**\u6587\u7AE0\u5DF2\u5132\u5B58**",
+  "reply.article.assets": "{{n}} \u5F35\u914D\u5716,\u5132\u5B58\u5728 {{dir}}",
   "reply.articleFailed": "\u6536\u5230\u9023\u7D50,\u4F46\u6587\u7AE0\u6293\u53D6\u5931\u6557\u3002",
   "reply.attachFailed": "\u9644\u4EF6\u5132\u5B58\u5931\u6557: {{name}}",
   "reply.recordFailed": "\u8A0A\u606F\u5DF2\u6536\u5230,\u4F46\u5BEB\u5165 vault \u5931\u6557\u3002",
@@ -1210,32 +1213,40 @@ function buildSendFailure(errmsg, ret, contextToken = "") {
   if (cat === "sessionExpired") return `${t("err.sessionExpired")} \u2014 ${t("err.sessionExpired.hint")}`;
   return `${t("err.unknown", { ret: String(ret), errmsg: errmsg.trim() || "?" })} \u2014 ${t("err.unknown.hint")}`;
 }
-function buildReceiptReply(r) {
-  if (!r.ok) return [t("reply.recordFailed")];
+var cell = (s) => s.replace(/\|/g, "\\|");
+function buildReceiptReplies(results) {
   const small = (s) => `<small>${s}</small>`;
-  const lines = [];
-  if (r.attachmentPaths.length) {
-    const first = r.attachmentPaths[0];
-    const key = /\.(jpe?g|png|gif|webp|bmp)$/i.test(first) ? "reply.image" : "reply.file";
-    lines.push(t(key), small(first));
-    for (const extra of r.attachmentPaths.slice(1)) {
-      lines.push(small(extra));
+  const out = [];
+  const failed = [];
+  const table = [];
+  for (const r of results) {
+    if (!r.ok) {
+      failed.push(t("reply.recordFailed"));
+      continue;
+    }
+    for (const p of r.attachmentPaths) {
+      const name = p.split("/").pop() ?? p;
+      table.push(`| ${cell(name)} | ${cell(p)} |`);
+    }
+    if (r.attachmentFailures.length) {
+      failed.push(t("reply.attachFailed", { name: r.attachmentFailures.join(", ") }));
+    }
+    for (const a of r.articleAssets) {
+      out.push(`${t("reply.article")} ${a.note}`);
+      if (a.assetCount > 0) out.push(small(t("reply.article.assets", { n: a.assetCount, dir: a.assetsDir })));
+    }
+    if (!r.attachmentPaths.length && !r.attachmentFailures.length && r.linkCount && !r.articleAssets.length) {
+      out.push(t("reply.articleFailed"));
+    }
+    if (!r.attachmentPaths.length && !r.attachmentFailures.length && !r.linkCount && !r.articleAssets.length) {
+      out.push(r.appended && r.dailyNote ? `${t("reply.received")} ${small(r.dailyNote)}` : t("reply.received"));
     }
   }
-  if (r.attachmentFailures.length) {
-    lines.push(t("reply.attachFailed", { name: r.attachmentFailures.join(", ") }));
+  if (table.length) {
+    out.unshift(`| ${t("reply.table.file")} | ${t("reply.table.location")} |`, "| --- | --- |", ...table);
   }
-  for (const note of r.articleNotes) {
-    lines.push(t("reply.article"), small(note));
-  }
-  if (!r.attachmentPaths.length && !r.attachmentFailures.length && r.linkCount && !r.articleNotes.length) {
-    lines.push(t("reply.articleFailed"));
-  }
-  if (!lines.length) {
-    lines.push(t("reply.received"));
-    if (r.appended && r.dailyNote) lines.push(small(r.dailyNote));
-  }
-  return lines;
+  out.push(...failed);
+  return out;
 }
 
 // src/core/importer.ts
@@ -1270,7 +1281,7 @@ async function importMessage(app, transport, msg, settings) {
   const result = {
     appended: false,
     dailyNote: "",
-    articleNotes: [],
+    articleAssets: [],
     attachmentPaths: [],
     attachmentFailures: [],
     linkCount: 0
@@ -1296,6 +1307,7 @@ async function importMessage(app, transport, msg, settings) {
           await ensureFolder(app, mediaFolder);
           const base = `${dayStamp(msg.timeMs)}_${timeOfDay(msg.timeMs).replace(":", "")}`;
           let body = info.markdown;
+          let savedAssets = 0;
           for (let i = 0; i < info.images.length; i++) {
             const img = info.images[i];
             const ph = `![[img:${i}]]`;
@@ -1307,6 +1319,7 @@ async function importMessage(app, transport, msg, settings) {
                   img.data.byteOffset + img.data.byteLength
                 );
                 await app.vault.adapter.writeBinary(path, ab);
+                savedAssets++;
                 body = body.split(ph).join(`![[${path}]]`);
                 continue;
               } catch {
@@ -1326,7 +1339,7 @@ async function importMessage(app, transport, msg, settings) {
             ""
           ].join("\n");
           await app.vault.create(notePath, note);
-          result.articleNotes.push(notePath);
+          result.articleAssets.push({ note: notePath, assetsDir: mediaFolder, assetCount: savedAssets });
         }
         display = display.split(url).join(`[[${notePath.replace(/\.md$/, "")}|${title}]]`);
       } catch {
@@ -2161,10 +2174,10 @@ var WechatianSettingTab = class extends import_obsidian4.PluginSettingTab {
     try {
       const qr = encodeQr(url);
       const n = qr.size + 8;
-      const cell = Math.max(3, Math.min(8, Math.floor(240 / n)));
+      const cell2 = Math.max(3, Math.min(8, Math.floor(240 / n)));
       const canvas = el.createEl("canvas");
-      canvas.width = n * cell;
-      canvas.height = n * cell;
+      canvas.width = n * cell2;
+      canvas.height = n * cell2;
       const ctx = canvas.getContext("2d");
       if (!ctx) return;
       ctx.fillStyle = "#ffffff";
@@ -2174,7 +2187,7 @@ var WechatianSettingTab = class extends import_obsidian4.PluginSettingTab {
       for (let r = 0; r < qr.size; r++) {
         for (let c = 0; c < qr.size; c++) {
           if (qr.isDark(r, c)) {
-            ctx.fillRect((c + quiet) * cell, (r + quiet) * cell, cell, cell);
+            ctx.fillRect((c + quiet) * cell2, (r + quiet) * cell2, cell2, cell2);
           }
         }
       }
@@ -2224,12 +2237,12 @@ var QrLoginModal = class extends import_obsidian5.Modal {
     this.qrEl.empty();
     try {
       const qr = encodeQr(url);
-      const cell = 6;
+      const cell2 = 6;
       const quiet = 4;
       const n = qr.size + quiet * 2;
       const canvas = this.qrEl.createEl("canvas", { cls: "wechatian-qr-canvas" });
-      canvas.width = n * cell;
-      canvas.height = n * cell;
+      canvas.width = n * cell2;
+      canvas.height = n * cell2;
       const ctx = canvas.getContext("2d");
       if (!ctx) return;
       ctx.fillStyle = "#ffffff";
@@ -2238,7 +2251,7 @@ var QrLoginModal = class extends import_obsidian5.Modal {
       for (let r = 0; r < qr.size; r++) {
         for (let c = 0; c < qr.size; c++) {
           if (qr.isDark(r, c)) {
-            ctx.fillRect((c + quiet) * cell, (r + quiet) * cell, cell, cell);
+            ctx.fillRect((c + quiet) * cell2, (r + quiet) * cell2, cell2, cell2);
           }
         }
       }
@@ -2650,8 +2663,12 @@ var WechatianPlugin = class extends import_obsidian6.Plugin {
           s.cursor = result.cursor ?? "";
         });
       }
+      const receipts = [];
       for (const msg of result.messages) {
-        await this.handleInbound(msg);
+        receipts.push(...await this.handleInbound(msg));
+      }
+      if (receipts.length) {
+        await this.sendReceiptReplies(receipts);
       }
       try {
         await this.outbox?.flush(
@@ -2667,14 +2684,14 @@ var WechatianPlugin = class extends import_obsidian6.Plugin {
     }
     this.polling = false;
   }
-  /** Handle a single inbound message */
+  /** Handle a single inbound message; returns a receipt entry when one should be sent */
   async handleInbound(msg) {
     const store = this.store;
-    if (!store) return;
+    if (!store) return [];
     const scanned = store.get().scannedUser.trim();
-    if (scanned && msg.from !== scanned) return;
+    if (scanned && msg.from !== scanned) return [];
     const key = `${msg.from}|${msg.messageId}|${msg.timeMs}`;
-    if (store.seen(key)) return;
+    if (store.seen(key)) return [];
     const tok = (msg.raw.context_token ?? "").trim();
     if (tok) {
       store.update((s) => {
@@ -2699,34 +2716,37 @@ var WechatianPlugin = class extends import_obsidian6.Plugin {
         new import_obsidian6.Notice(t("notice.importFailed", { err: String(e?.message ?? e) }));
       }
       if (this.settings.autoReply) {
-        await this.sendReceiptReply(msg.from, result);
+        return [
+          result ? {
+            ok: true,
+            appended: result.appended,
+            dailyNote: result.dailyNote,
+            attachmentPaths: result.attachmentPaths,
+            attachmentFailures: result.attachmentFailures,
+            linkCount: result.linkCount,
+            articleAssets: result.articleAssets
+          } : { ok: false, appended: false, dailyNote: "", attachmentPaths: [], attachmentFailures: [], linkCount: 0, articleAssets: [] }
+        ];
       }
     }
+    return [];
   }
   /**
-   * Confirmation reply sent right after an inbound message has been recorded:
-   * images/files report their saved path, articles report the note path (or a
-   * fetch failure), plain text confirms the daily note the entry landed in.
-   * Failures here must never break the receive flow.
+   * One batched confirmation reply per polling round: saved files/images in a
+   * table, articles with their note path and image directory, plain messages
+   * with the daily note they landed in. Failures never break the receive flow.
    */
-  async sendReceiptReply(from, result) {
+  async sendReceiptReplies(receipts) {
     try {
+      const to = this.store.get().scannedUser.trim();
+      if (!to) return;
       const client = this.client ?? this.makeClient();
-      const contextToken = this.store.get().contextTokens[from] ?? "";
-      const lines = buildReceiptReply(
-        result ? {
-          ok: true,
-          appended: result.appended,
-          dailyNote: result.dailyNote,
-          attachmentPaths: result.attachmentPaths,
-          attachmentFailures: result.attachmentFailures,
-          linkCount: result.linkCount,
-          articleNotes: result.articleNotes
-        } : { ok: false, appended: false, dailyNote: "", attachmentPaths: [], attachmentFailures: [], linkCount: 0, articleNotes: [] }
-      );
-      const res = await client.sendText(from, lines.join("\n"), contextToken);
+      const contextToken = this.store.get().contextTokens[to] ?? "";
+      const lines = buildReceiptReplies(receipts);
+      if (!lines.length) return;
+      const res = await client.sendText(to, lines.join("\n"), contextToken);
       if (res.ok) {
-        await appendOutbound(this.app, this.settings.inboxFolder, Date.now(), from, [
+        await appendOutbound(this.app, this.settings.inboxFolder, Date.now(), to, [
           `**${timeOfDay(Date.now())}** \xB7 ${t("importer.sent")}`,
           "",
           ...quoteBlock(lines.join("\n"))

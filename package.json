@@ -1,6 +1,6 @@
 {
   "name": "wechatian",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "WeChat messaging bridge: send and receive messages, attachments, and articles between WeChat and your vault.",
   "scripts": {
     "build": "node esbuild.config.js",

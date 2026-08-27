@@ -1,5 +1,6 @@
 /** i18n: explicit user choice wins; 'system' follows Obsidian's language */
 import { getLanguage as obsidianLanguage } from 'obsidian';
+import type { ArticleAsset } from './core/types';
 
 type Dict = Record<string, string>;
 export type UiLanguage = 'system' | 'en' | 'zh' | 'tw';
@@ -96,9 +97,10 @@ const en: Dict = {
 
   'reply.received': '**Received**',
   'reply.recorded': '**Received**',
-  'reply.image': '**Image received**',
-  'reply.file': '**File received**',
+  'reply.table.file': 'File',
+  'reply.table.location': 'Saved to',
   'reply.article': '**Article saved**',
+  'reply.article.assets': '{{n}} image(s) attached, saved to {{dir}}',
   'reply.articleFailed': 'Link received, but fetching the article failed.',
   'reply.attachFailed': 'Failed to save attachment: {{name}}',
   'reply.recordFailed': 'Message received, but recording it to the vault failed.',
@@ -209,9 +211,10 @@ const zh: Dict = {
 
   'reply.received': '**收到**',
   'reply.recorded': '**收到**',
-  'reply.image': '**已收到图片**',
-  'reply.file': '**已收到文件**',
+  'reply.table.file': '文件',
+  'reply.table.location': '保存位置',
   'reply.article': '**文章已保存**',
+  'reply.article.assets': '{{n}} 张配图,保存在 {{dir}}',
   'reply.articleFailed': '收到链接,但文章抓取失败。',
   'reply.attachFailed': '附件保存失败: {{name}}',
   'reply.recordFailed': '消息已收到,但写入 vault 失败。',
@@ -322,9 +325,10 @@ const tw: Dict = {
 
   'reply.received': '**收到**',
   'reply.recorded': '**收到**',
-  'reply.image': '**已收到圖片**',
-  'reply.file': '**已收到檔案**',
+  'reply.table.file': '檔案',
+  'reply.table.location': '儲存位置',
   'reply.article': '**文章已儲存**',
+  'reply.article.assets': '{{n}} 張配圖,儲存在 {{dir}}',
   'reply.articleFailed': '收到連結,但文章抓取失敗。',
   'reply.attachFailed': '附件儲存失敗: {{name}}',
   'reply.recordFailed': '訊息已收到,但寫入 vault 失敗。',
@@ -417,40 +421,52 @@ export interface ReceiptReplyInput {
   attachmentPaths: string[]; // saved attachment paths
   attachmentFailures: string[]; // attachment names that failed to save
   linkCount: number; // links found in the message text
-  articleNotes: string[]; // created article note paths
+  articleAssets: ArticleAsset[]; // saved article notes + where their images went
 }
 
+/** Escape pipes so vault paths render intact inside a markdown table cell */
+const cell = (s: string) => s.replace(/\|/g, '\\|');
+
 /**
- * Assemble the confirmation reply sent back after recording an inbound message:
- * images/files report their saved paths, articles report the note path (or a
- * fetch failure), plain text confirms the daily note the entry was recorded to.
+ * Assemble the confirmation reply for every message recorded in one polling
+ * round. All messages from the same sender go back as ONE WeChat message:
+ * saved files/images share a single table (File | Saved to), each article
+ * gets its note path plus a subdued line for the downloaded images, and a
+ * plain message just confirms the daily note it landed in.
  * Pure function so the logic is unit-testable.
  */
-export function buildReceiptReply(r: ReceiptReplyInput): string[] {
-  if (!r.ok) return [t('reply.recordFailed')];
-  // saved paths ride on their own line, small and subdued
+export function buildReceiptReplies(results: ReceiptReplyInput[]): string[] {
   const small = (s: string) => `<small>${s}</small>`;
-  const lines: string[] = [];
-  if (r.attachmentPaths.length) {
-    const first = r.attachmentPaths[0];
-    const key = /\.(jpe?g|png|gif|webp|bmp)$/i.test(first) ? 'reply.image' : 'reply.file';
-    lines.push(t(key), small(first));
-    for (const extra of r.attachmentPaths.slice(1)) {
-      lines.push(small(extra));
+  const out: string[] = [];
+  const failed: string[] = [];
+  // attachments from every message in the round share one table
+  const table: string[] = [];
+  for (const r of results) {
+    if (!r.ok) {
+      failed.push(t('reply.recordFailed'));
+      continue;
+    }
+    for (const p of r.attachmentPaths) {
+      const name = p.split('/').pop() ?? p;
+      table.push(`| ${cell(name)} | ${cell(p)} |`);
+    }
+    if (r.attachmentFailures.length) {
+      failed.push(t('reply.attachFailed', { name: r.attachmentFailures.join(', ') }));
+    }
+    for (const a of r.articleAssets) {
+      out.push(`${t('reply.article')} ${a.note}`);
+      if (a.assetCount > 0) out.push(small(t('reply.article.assets', { n: a.assetCount, dir: a.assetsDir })));
+    }
+    if (!r.attachmentPaths.length && !r.attachmentFailures.length && r.linkCount && !r.articleAssets.length) {
+      out.push(t('reply.articleFailed'));
+    }
+    if (!r.attachmentPaths.length && !r.attachmentFailures.length && !r.linkCount && !r.articleAssets.length) {
+      out.push(r.appended && r.dailyNote ? `${t('reply.received')} ${small(r.dailyNote)}` : t('reply.received'));
     }
   }
-  if (r.attachmentFailures.length) {
-    lines.push(t('reply.attachFailed', { name: r.attachmentFailures.join(', ') }));
+  if (table.length) {
+    out.unshift(`| ${t('reply.table.file')} | ${t('reply.table.location')} |`, '| --- | --- |', ...table);
   }
-  for (const note of r.articleNotes) {
-    lines.push(t('reply.article'), small(note));
-  }
-  if (!r.attachmentPaths.length && !r.attachmentFailures.length && r.linkCount && !r.articleNotes.length) {
-    lines.push(t('reply.articleFailed'));
-  }
-  if (!lines.length) {
-    lines.push(t('reply.received'));
-    if (r.appended && r.dailyNote) lines.push(small(r.dailyNote));
-  }
-  return lines;
+  out.push(...failed);
+  return out;
 }
