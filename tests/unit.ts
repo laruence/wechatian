@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import type { App } from 'obsidian';
 import type { HttpTransport, HttpResponse } from '../src/core/http';
 import { lowerHeaders } from '../src/core/http';
-import { parseAesKey, encryptEcb, decryptEcb, downloadUrl, detectImageExt, md5Hex, ecbPaddedSize } from '../src/core/crypto';
+import { parseAesKey, encryptEcb, decryptEcb, encryptEcbInto, downloadUrl, detectImageExt, md5Hex, ecbPaddedSize } from '../src/core/crypto';
 import { extractLinks } from '../src/core/article';
 import { importMessage, sanitizeFileName, dayStamp, timeOfDay, quoteBlock, ensureFolder } from '../src/core/importer';
 import type { InboundMessage } from '../src/core/types';
@@ -147,6 +147,29 @@ test('encrypt/decrypt ECB roundtrip', () => {
   const enc = encryptEcb(plain, key);
   assert.notDeepEqual(enc, plain);
   assert.deepEqual(decryptEcb(enc, key), plain);
+});
+
+test('encryptEcbInto matches encryptEcb, incl. the 1MiB chunk boundary', () => {
+  const key = Buffer.from('0123456789abcdef');
+  for (const len of [0, 15, 16, 33, (1 << 20) - 16, 1 << 20, (1 << 20) + 17, 3 << 20]) {
+    const plain = Buffer.alloc(len);
+    for (let i = 0; i < len; i++) plain[i] = (i * 31 + 7) & 0xff;
+    const out = Buffer.allocUnsafe(ecbPaddedSize(len));
+    encryptEcbInto(plain, key, out);
+    assert.equal(out.length, ecbPaddedSize(len));
+    assert.deepEqual(out, encryptEcb(plain, key), `len=${len}`);
+    assert.deepEqual(decryptEcb(out, key), plain, `roundtrip len=${len}`);
+  }
+});
+
+test('encryptEcbInto works on a Uint8Array view of a larger buffer', () => {
+  const key = Buffer.from('0123456789abcdef');
+  const host = new Uint8Array(100);
+  const view = host.subarray(10, 60); // byteOffset != 0
+  for (let i = 0; i < view.length; i++) view[i] = i;
+  const out = Buffer.allocUnsafe(ecbPaddedSize(view.length));
+  encryptEcbInto(view, key, out);
+  assert.deepEqual(decryptEcb(out, key), Buffer.from(view));
 });
 
 test('downloadUrl encoding', () => {
@@ -387,7 +410,10 @@ test('outbox: .md success deletes file and records the send', async () => {
   const sendReq = transport.requests.find((r) => r.url.includes('/ilink/bot/sendmessage'));
   assert.ok(sendReq, 'gateway sendmessage called');
   assert.ok((sendReq!.body as string).includes('**done**'));
-  assert.ok(v.files.get('Wechatian/2026-08-27.md')?.includes('**done**'), 'send recorded in daily note');
+  // outbox records sends under *today's* date (Date.now), not a fixture date
+  const d = new Date();
+  const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  assert.ok(v.files.get(`Wechatian/${today}.md`)?.includes('**done**'), 'send recorded in daily note');
 });
 
 test('outbox: failure keeps the file with a categorized hint', async () => {

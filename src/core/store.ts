@@ -19,6 +19,8 @@ const DEDUP_KEEP = 500;
 
 export class StateStore {
   private state: BotState;
+  /** index over state.dedup so lookups are O(1) instead of scanning 500 keys per message */
+  private dedupSet = new Set<string>();
   private saveTimer: number | null = null;
   /** last save error, so a persistent failure is logged once instead of every retry */
   private saveError: string | null = null;
@@ -60,6 +62,7 @@ export class StateStore {
         if (await this.app.vault.adapter.exists(path)) {
           const raw = await this.app.vault.adapter.read(path);
           this.state = { ...this.emptyState(), ...(JSON.parse(raw) as Partial<BotState>) };
+          this.dedupSet = new Set(this.state.dedup);
           return; // a legacy state.json is read as-is; the next save writes it to the new location
         }
       } catch (e) {
@@ -90,6 +93,7 @@ export class StateStore {
     // Trim the dedup ring to keep state.json from growing unbounded
     if (this.state.dedup.length > DEDUP_KEEP) {
       this.state.dedup = this.state.dedup.slice(-DEDUP_KEEP);
+      this.dedupSet = new Set(this.state.dedup); // keep the index in sync with the trimmed array
     }
     try {
       await this.app.vault.adapter.write(this.file, JSON.stringify(this.state));
@@ -107,7 +111,8 @@ export class StateStore {
 
   /** Message dedup: returns true if this key was already seen */
   seen(key: string): boolean {
-    if (this.state.dedup.includes(key)) return true;
+    if (this.dedupSet.has(key)) return true;
+    this.dedupSet.add(key);
     this.state.dedup.push(key);
     this.scheduleSave();
     return false;

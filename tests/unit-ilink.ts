@@ -462,3 +462,42 @@ test('bodyTextAuto: transparent gunzip', async () => {
   const plain: HttpResponse = { status: 200, body: new TextEncoder().encode('raw').buffer as ArrayBuffer, headers: {} };
   assert.equal(await bodyTextAuto(plain), 'raw');
 });
+
+/* ------------------------------------------------------------------- dedup */
+
+/** Store + fake adapter without the outbox fixtures (the store only needs read/write/exists) */
+function storeFixture() {
+  const files = new Map<string, string>();
+  const adapter = {
+    exists: async (p: string) => files.has(p),
+    read: async (p: string) => {
+      if (!files.has(p)) throw new Error(`ENOENT: ${p}`);
+      return files.get(p)!;
+    },
+    write: async (p: string, c: string) => void files.set(p, c),
+  };
+  const app = { vault: { adapter } } as unknown as App;
+  return { app, files };
+}
+
+test('store dedup: seen() deduplicates, trims at 500 and keeps trimming consistent', async () => {
+  const { app, files } = storeFixture();
+  const store = new StateStore(app, 'plugin/state.json');
+  assert.equal(store.seen('k1'), false);
+  assert.equal(store.seen('k1'), true, 'duplicate key is rejected');
+
+  // push past the 500-entry trim boundary
+  for (let i = 0; i < 505; i++) assert.equal(store.seen(`m${i}`), false);
+  await store.saveNow();
+  const saved = JSON.parse(files.get('plugin/state.json')!) as { dedup: string[] };
+  assert.equal(saved.dedup.length, 500);
+  // the trimmed-out oldest keys are no longer deduplicated; kept keys still are
+  assert.equal(store.seen('m0'), false, 'oldest key fell out of the ring');
+  assert.equal(store.seen('m504'), true, 'recent key still deduplicated after trim');
+
+  // the trimmed ring survives a reload through init()
+  const store2 = new StateStore(app, 'plugin/state.json');
+  await store2.init();
+  assert.equal(store2.seen('m504'), true, 'dedup index rebuilt from disk');
+  assert.equal(store2.seen('m0'), false);
+});

@@ -88,10 +88,16 @@ function decryptEcb(cipher, key) {
   d.setAutoPadding(true);
   return Buffer.concat([d.update(cipher), d.final()]);
 }
-function encryptEcb(plain, key) {
+function encryptEcbInto(plain, key, out) {
   const c = (0, import_crypto.createCipheriv)("aes-128-ecb", key, null);
   c.setAutoPadding(true);
-  return Buffer.concat([c.update(plain), c.final()]);
+  let off = 0;
+  const CHUNK = 1 << 20;
+  while (plain.length - off > CHUNK) {
+    off += c.update(plain.subarray(off, off + CHUNK)).copy(out, off);
+  }
+  off += c.update(plain.subarray(off)).copy(out, off);
+  c.final().copy(out, off);
 }
 function downloadUrl(cdnBase, encParam) {
   return `${cdnBase.replace(/\/$/, "")}/download?encrypted_query_param=${encodeURIComponent(encParam)}`;
@@ -354,6 +360,8 @@ var IlinkClient = class {
     const filekey = randomHex(16);
     const mediaType = att.kind === "image" ? UPLOAD_MEDIA_IMAGE : att.kind === "video" ? UPLOAD_MEDIA_VIDEO : UPLOAD_MEDIA_FILE;
     const plain = Buffer.from(att.data.buffer, att.data.byteOffset, att.data.byteLength);
+    const cipher = Buffer.allocUnsafeSlow(ecbPaddedSize(plain.length));
+    encryptEcbInto(plain, key, cipher);
     const up = await this.post(
       "ilink/bot/getuploadurl",
       {
@@ -373,14 +381,13 @@ var IlinkClient = class {
     if ((up.errcode ?? 0) !== 0) throw new Error(`getuploadurl errcode=${up.errcode} ${up.errmsg ?? ""}`);
     const uploadUrl = (up.upload_full_url ?? "").trim() || buildCdnUploadUrl(cdnBase, (up.upload_param ?? "").trim(), filekey);
     if (!uploadUrl) throw new Error(`getuploadurl returned neither upload_param nor upload_full_url`);
-    const cipher = encryptEcb(plain, key);
     const downloadParam = await this.uploadCipher(uploadUrl, cipher);
     return { downloadParam, aesKey: key, cipherSize: cipher.length, rawSize: plain.length };
   }
   /** POST ciphertext to the CDN; the x-encrypted-param response header is the download credential */
   async uploadCipher(url, cipher) {
     let lastErr = "";
-    const body = cipher.buffer.slice(cipher.byteOffset, cipher.byteOffset + cipher.byteLength);
+    const body = cipher.buffer;
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
         const r = await this.transport.post(url, { "Content-Type": "application/octet-stream" }, body, 12e4);
@@ -626,6 +633,8 @@ var StateStore = class {
     this.state = this.load();
   }
   state;
+  /** index over state.dedup so lookups are O(1) instead of scanning 500 keys per message */
+  dedupSet = /* @__PURE__ */ new Set();
   saveTimer = null;
   /** last save error, so a persistent failure is logged once instead of every retry */
   saveError = null;
@@ -655,6 +664,7 @@ var StateStore = class {
         if (await this.app.vault.adapter.exists(path)) {
           const raw = await this.app.vault.adapter.read(path);
           this.state = { ...this.emptyState(), ...JSON.parse(raw) };
+          this.dedupSet = new Set(this.state.dedup);
           return;
         }
       } catch (e) {
@@ -679,6 +689,7 @@ var StateStore = class {
   async saveNow() {
     if (this.state.dedup.length > DEDUP_KEEP) {
       this.state.dedup = this.state.dedup.slice(-DEDUP_KEEP);
+      this.dedupSet = new Set(this.state.dedup);
     }
     try {
       await this.app.vault.adapter.write(this.file, JSON.stringify(this.state));
@@ -693,7 +704,8 @@ var StateStore = class {
   }
   /** Message dedup: returns true if this key was already seen */
   seen(key) {
-    if (this.state.dedup.includes(key)) return true;
+    if (this.dedupSet.has(key)) return true;
+    this.dedupSet.add(key);
     this.state.dedup.push(key);
     this.scheduleSave();
     return false;

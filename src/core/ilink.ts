@@ -5,7 +5,7 @@
  */
 import type { HttpTransport } from './http';
 import { bodyJson, bodyText, HttpError } from './http';
-import { downloadUrl, parseAesKey, decryptEcb, encryptEcb, md5Hex, ecbPaddedSize } from './crypto';
+import { downloadUrl, parseAesKey, decryptEcb, encryptEcbInto, md5Hex, ecbPaddedSize } from './crypto';
 import {
   type AttachmentFailure,
   type GetUpdatesResult,
@@ -321,7 +321,15 @@ export class IlinkClient {
     const key = randomBytes16();
     const filekey = randomHex(16);
     const mediaType = att.kind === 'image' ? UPLOAD_MEDIA_IMAGE : att.kind === 'video' ? UPLOAD_MEDIA_VIDEO : UPLOAD_MEDIA_FILE;
+    // Encrypt into one precisely-sized buffer (md5 reads the view directly,
+    // so there is no extra plaintext copy). allocUnsafeSlow never uses the
+    // small-buffer pool, so cipher.buffer IS exactly the ciphertext for any
+    // size and uploadCipher can hand it to the transport without slicing out
+    // a second full-size copy — for a 100MB upload the peak stays at ~200MB
+    // instead of ~300MB.
     const plain = Buffer.from(att.data.buffer, att.data.byteOffset, att.data.byteLength);
+    const cipher = Buffer.allocUnsafeSlow(ecbPaddedSize(plain.length));
+    encryptEcbInto(plain, key, cipher);
 
     const up = await this.post<GetUploadUrlResult>(
       'ilink/bot/getuploadurl',
@@ -345,7 +353,6 @@ export class IlinkClient {
       || buildCdnUploadUrl(cdnBase, (up.upload_param ?? '').trim(), filekey);
     if (!uploadUrl) throw new Error(`getuploadurl returned neither upload_param nor upload_full_url`);
 
-    const cipher = encryptEcb(plain, key);
     const downloadParam = await this.uploadCipher(uploadUrl, cipher);
     return { downloadParam, aesKey: key, cipherSize: cipher.length, rawSize: plain.length };
   }
@@ -353,7 +360,9 @@ export class IlinkClient {
   /** POST ciphertext to the CDN; the x-encrypted-param response header is the download credential */
   private async uploadCipher(url: string, cipher: Buffer): Promise<string> {
     let lastErr = '';
-    const body = cipher.buffer.slice(cipher.byteOffset, cipher.byteOffset + cipher.byteLength) as ArrayBuffer;
+    // cipher is allocated with exactly the cipher size (allocUnsafeSlow: never
+    // pooled), so its backing buffer is precisely the upload body — no slice/copy
+    const body = cipher.buffer as ArrayBuffer;
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
         const r = await this.transport.post(url, { 'Content-Type': 'application/octet-stream' }, body, 120_000);

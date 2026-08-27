@@ -28,6 +28,24 @@ export function encryptEcb(plain: Buffer, key: Buffer): Buffer {
   return Buffer.concat([c.update(plain), c.final()]);
 }
 
+/**
+ * Like encryptEcb, but writes into a caller-owned buffer of exactly the
+ * padded size — no intermediate copies. That halves the peak memory for
+ * 100MB media uploads (plaintext + ciphertext, instead of plaintext + two
+ * ciphertext copies). Encrypts in chunks so the per-call input stays small.
+ */
+export function encryptEcbInto(plain: Uint8Array, key: Buffer, out: Buffer): void {
+  const c = createCipheriv('aes-128-ecb', key, null);
+  c.setAutoPadding(true);
+  let off = 0;
+  const CHUNK = 1 << 20; // 1 MiB — any multiple of the 16-byte block size works
+  while (plain.length - off > CHUNK) {
+    off += c.update(plain.subarray(off, off + CHUNK)).copy(out, off);
+  }
+  off += c.update(plain.subarray(off)).copy(out, off);
+  c.final().copy(out, off);
+}
+
 export function downloadUrl(cdnBase: string, encParam: string): string {
   return `${cdnBase.replace(/\/$/, '')}/download?encrypted_query_param=${encodeURIComponent(encParam)}`;
 }
