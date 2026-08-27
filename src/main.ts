@@ -420,12 +420,13 @@ export default class WechatianPlugin extends Plugin {
   }
 
   /**
-   * One batched confirmation reply per polling round: saved files/images in a
-   * table, articles with their note path and image directory, plain messages
-   * with the daily note they landed in. Failures never break the receive flow.
+   * One batched confirmation reply per polling round: a "received and saved"
+   * line per recorded message, with failure reasons attached. Failures never
+   * break the receive flow.
    */
   private async sendReceiptReplies(receipts: ReceiptReplyInput[]): Promise<void> {
     try {
+      if (!receipts.length) return; // nothing recorded this round -> no receipt
       const to = this.store.get().scannedUser.trim();
       if (!to) return;
       const client = this.client ?? this.makeClient();

@@ -95,16 +95,9 @@ const en: Dict = {
   'sendTest.notBound': 'Not logged in yet',
   'sendTest.needFirstMessage': 'No send credential yet — send any message to the bot from WeChat first, then retry',
 
-  'reply.received': '**Received**',
-  'reply.recorded': '**Received**',
-  'reply.table.file': 'File',
-  'reply.table.location': 'Saved to',
-  'reply.article': '**Article saved**',
-  'reply.article.assets': '{{n}} image(s) attached, saved to {{dir}}',
-  'reply.articleFailed': 'Link received, but fetching the article failed: {{reason}}',
-  'reply.attachFailed': 'Failed to save attachment: {{name}}',
-  'reply.attachment.failed': 'failed to save',
-  'reply.article.failed': 'failed to fetch',
+  'reply.done': 'Received and saved',
+  'reply.attachment.failed': 'failed to save attachment',
+  'reply.article.failed': 'failed to fetch article',
   'reply.recordFailed': 'Message received, but recording it to the vault failed.',
 
   'err.noToken': 'No send credential yet',
@@ -211,16 +204,9 @@ const zh: Dict = {
   'sendTest.notBound': '尚未登录',
   'sendTest.needFirstMessage': '还没有发送凭据——请先从微信给机器人发一条消息,再重试',
 
-  'reply.received': '**收到**',
-  'reply.recorded': '**收到**',
-  'reply.table.file': '文件',
-  'reply.table.location': '保存位置',
-  'reply.article': '**文章已保存**',
-  'reply.article.assets': '{{n}} 张配图,保存在 {{dir}}',
-  'reply.articleFailed': '收到链接,但文章抓取失败: {{reason}}',
-  'reply.attachFailed': '附件保存失败: {{name}}',
-  'reply.attachment.failed': '保存失败',
-  'reply.article.failed': '抓取失败',
+  'reply.done': '收到,已完成保存',
+  'reply.attachment.failed': '附件保存失败',
+  'reply.article.failed': '文章抓取失败',
   'reply.recordFailed': '消息已收到,但写入 vault 失败。',
 
   'err.noToken': '还没有发送凭据',
@@ -327,16 +313,9 @@ const tw: Dict = {
   'sendTest.notBound': '尚未登入',
   'sendTest.needFirstMessage': '還沒有發送憑證——請先從微信給機器人發一條訊息,再重試',
 
-  'reply.received': '**收到**',
-  'reply.recorded': '**收到**',
-  'reply.table.file': '檔案',
-  'reply.table.location': '儲存位置',
-  'reply.article': '**文章已儲存**',
-  'reply.article.assets': '{{n}} 張配圖,儲存在 {{dir}}',
-  'reply.articleFailed': '收到連結,但文章抓取失敗: {{reason}}',
-  'reply.attachFailed': '附件儲存失敗: {{name}}',
-  'reply.attachment.failed': '儲存失敗',
-  'reply.article.failed': '抓取失敗',
+  'reply.done': '收到,已完成儲存',
+  'reply.attachment.failed': '附件儲存失敗',
+  'reply.article.failed': '文章抓取失敗',
   'reply.recordFailed': '訊息已收到,但寫入 vault 失敗。',
 
   'err.noToken': '還沒有發送憑證',
@@ -431,53 +410,26 @@ export interface ReceiptReplyInput {
   articleFailures: string[]; // reasons the article notes could not be created
 }
 
-/** Escape pipes so vault paths render intact inside a markdown table cell */
-const cell = (s: string) => s.replace(/\|/g, '\\|');
-
 /**
  * Assemble the confirmation reply for every message recorded in one polling
  * round. All messages from the same sender go back as ONE WeChat message:
- * saved files/images and saved articles share a single markdown table —
- * the first column is the file name or article title, the second column is
- * where it was saved. An article occupies two rows: its note path, then the
- * downloaded images (count + directory). Failures join the same table with
- * the reason attached, so the user always sees why something did not land.
- * Pure function so the logic is unit-testable.
+ * one "received and saved" line per recorded message, plus one line per
+ * failure with its reason, so the user always sees why something did not
+ * land. Pure function so the logic is unit-testable.
  */
 export function buildReceiptReplies(results: ReceiptReplyInput[]): string[] {
-  const out: string[] = [];
-  // files, images and articles from every message in the round share one table
-  const table: string[] = [];
+  const lines: string[] = [];
   for (const r of results) {
     if (!r.ok) {
-      out.push(t('reply.recordFailed'));
+      lines.push(t('reply.recordFailed'));
       continue;
     }
-    for (const p of r.attachmentPaths) {
-      const name = p.split('/').pop() ?? p;
-      table.push(`| ${cell(name)} | ${cell(p)} |`);
-    }
-    for (const f of r.attachmentFailures) {
-      table.push(`| ${cell(f)} | ${t('reply.attachment.failed')} |`);
-    }
-    for (const a of r.articleAssets) {
-      table.push(`| ${cell(a.title)} | ${cell(a.note)} |`);
-      if (a.assetCount > 0) {
-        table.push(`| ${t('reply.article.assets', { n: a.assetCount, dir: a.assetsDir })} | |`);
-      }
-    }
-    for (const reason of r.articleFailures) {
-      table.push(`| ${cell(t('reply.article.failed'))} | ${cell(reason)} |`);
-    }
+    lines.push(t('reply.done'));
+    for (const f of r.attachmentFailures) lines.push(`${t('reply.attachment.failed')}: ${f}`);
+    for (const reason of r.articleFailures) lines.push(`${t('reply.article.failed')}: ${reason}`);
     if (!r.attachmentPaths.length && !r.attachmentFailures.length && r.linkCount && !r.articleAssets.length && !r.articleFailures.length) {
-      out.push(t('reply.articleFailed', { reason: 'unknown' }));
-    }
-    if (!r.attachmentPaths.length && !r.attachmentFailures.length && !r.linkCount && !r.articleAssets.length && !r.articleFailures.length) {
-      out.push(r.appended && r.dailyNote ? `${t('reply.received')} ${r.dailyNote}` : t('reply.received'));
+      lines.push(`${t('reply.article.failed')}: unknown`);
     }
   }
-  if (table.length) {
-    out.unshift(`| ${t('reply.table.file')} | ${t('reply.table.location')} |`, '| --- | --- |', ...table);
-  }
-  return out;
+  return [lines.join('\n')];
 }

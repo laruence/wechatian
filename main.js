@@ -948,16 +948,9 @@ var en = {
   "sendTest.failed": "Send failed: {{err}}",
   "sendTest.notBound": "Not logged in yet",
   "sendTest.needFirstMessage": "No send credential yet \u2014 send any message to the bot from WeChat first, then retry",
-  "reply.received": "**Received**",
-  "reply.recorded": "**Received**",
-  "reply.table.file": "File",
-  "reply.table.location": "Saved to",
-  "reply.article": "**Article saved**",
-  "reply.article.assets": "{{n}} image(s) attached, saved to {{dir}}",
-  "reply.articleFailed": "Link received, but fetching the article failed: {{reason}}",
-  "reply.attachFailed": "Failed to save attachment: {{name}}",
-  "reply.attachment.failed": "failed to save",
-  "reply.article.failed": "failed to fetch",
+  "reply.done": "Received and saved",
+  "reply.attachment.failed": "failed to save attachment",
+  "reply.article.failed": "failed to fetch article",
   "reply.recordFailed": "Message received, but recording it to the vault failed.",
   "err.noToken": "No send credential yet",
   "err.noToken.hint": "Replying requires a context token handed out by WeChat: first send any message to the bot from WeChat, then retry.",
@@ -1051,16 +1044,9 @@ var zh = {
   "sendTest.failed": "\u53D1\u9001\u5931\u8D25: {{err}}",
   "sendTest.notBound": "\u5C1A\u672A\u767B\u5F55",
   "sendTest.needFirstMessage": "\u8FD8\u6CA1\u6709\u53D1\u9001\u51ED\u636E\u2014\u2014\u8BF7\u5148\u4ECE\u5FAE\u4FE1\u7ED9\u673A\u5668\u4EBA\u53D1\u4E00\u6761\u6D88\u606F,\u518D\u91CD\u8BD5",
-  "reply.received": "**\u6536\u5230**",
-  "reply.recorded": "**\u6536\u5230**",
-  "reply.table.file": "\u6587\u4EF6",
-  "reply.table.location": "\u4FDD\u5B58\u4F4D\u7F6E",
-  "reply.article": "**\u6587\u7AE0\u5DF2\u4FDD\u5B58**",
-  "reply.article.assets": "{{n}} \u5F20\u914D\u56FE,\u4FDD\u5B58\u5728 {{dir}}",
-  "reply.articleFailed": "\u6536\u5230\u94FE\u63A5,\u4F46\u6587\u7AE0\u6293\u53D6\u5931\u8D25: {{reason}}",
-  "reply.attachFailed": "\u9644\u4EF6\u4FDD\u5B58\u5931\u8D25: {{name}}",
-  "reply.attachment.failed": "\u4FDD\u5B58\u5931\u8D25",
-  "reply.article.failed": "\u6293\u53D6\u5931\u8D25",
+  "reply.done": "\u6536\u5230,\u5DF2\u5B8C\u6210\u4FDD\u5B58",
+  "reply.attachment.failed": "\u9644\u4EF6\u4FDD\u5B58\u5931\u8D25",
+  "reply.article.failed": "\u6587\u7AE0\u6293\u53D6\u5931\u8D25",
   "reply.recordFailed": "\u6D88\u606F\u5DF2\u6536\u5230,\u4F46\u5199\u5165 vault \u5931\u8D25\u3002",
   "err.noToken": "\u8FD8\u6CA1\u6709\u53D1\u9001\u51ED\u636E",
   "err.noToken.hint": "\u56DE\u590D\u9700\u8981\u5FAE\u4FE1\u4E0B\u53D1\u7684 context token\u2014\u2014\u5148\u4ECE\u5FAE\u4FE1\u7ED9\u673A\u5668\u4EBA\u53D1\u4EFB\u610F\u4E00\u6761\u6D88\u606F,\u518D\u91CD\u8BD5\u3002",
@@ -1154,16 +1140,9 @@ var tw = {
   "sendTest.failed": "\u767C\u9001\u5931\u6557: {{err}}",
   "sendTest.notBound": "\u5C1A\u672A\u767B\u5165",
   "sendTest.needFirstMessage": "\u9084\u6C92\u6709\u767C\u9001\u6191\u8B49\u2014\u2014\u8ACB\u5148\u5F9E\u5FAE\u4FE1\u7D66\u6A5F\u5668\u4EBA\u767C\u4E00\u689D\u8A0A\u606F,\u518D\u91CD\u8A66",
-  "reply.received": "**\u6536\u5230**",
-  "reply.recorded": "**\u6536\u5230**",
-  "reply.table.file": "\u6A94\u6848",
-  "reply.table.location": "\u5132\u5B58\u4F4D\u7F6E",
-  "reply.article": "**\u6587\u7AE0\u5DF2\u5132\u5B58**",
-  "reply.article.assets": "{{n}} \u5F35\u914D\u5716,\u5132\u5B58\u5728 {{dir}}",
-  "reply.articleFailed": "\u6536\u5230\u9023\u7D50,\u4F46\u6587\u7AE0\u6293\u53D6\u5931\u6557: {{reason}}",
-  "reply.attachFailed": "\u9644\u4EF6\u5132\u5B58\u5931\u6557: {{name}}",
-  "reply.attachment.failed": "\u5132\u5B58\u5931\u6557",
-  "reply.article.failed": "\u6293\u53D6\u5931\u6557",
+  "reply.done": "\u6536\u5230,\u5DF2\u5B8C\u6210\u5132\u5B58",
+  "reply.attachment.failed": "\u9644\u4EF6\u5132\u5B58\u5931\u6557",
+  "reply.article.failed": "\u6587\u7AE0\u6293\u53D6\u5931\u6557",
   "reply.recordFailed": "\u8A0A\u606F\u5DF2\u6536\u5230,\u4F46\u5BEB\u5165 vault \u5931\u6557\u3002",
   "err.noToken": "\u9084\u6C92\u6709\u767C\u9001\u6191\u8B49",
   "err.noToken.hint": "\u56DE\u8986\u9700\u8981\u5FAE\u4FE1\u4E0B\u767C\u7684 context token\u2014\u2014\u8ACB\u5148\u5F9E\u5FAE\u4FE1\u7D66\u6A5F\u5668\u4EBA\u767C\u4EFB\u610F\u4E00\u689D\u8A0A\u606F,\u518D\u91CD\u8A66\u3002",
@@ -1223,42 +1202,21 @@ function buildSendFailure(errmsg, ret, contextToken = "") {
   if (cat === "sessionExpired") return `${t("err.sessionExpired")} \u2014 ${t("err.sessionExpired.hint")}`;
   return `${t("err.unknown", { ret: String(ret), errmsg: errmsg.trim() || "?" })} \u2014 ${t("err.unknown.hint")}`;
 }
-var cell = (s) => s.replace(/\|/g, "\\|");
 function buildReceiptReplies(results) {
-  const out = [];
-  const table = [];
+  const lines = [];
   for (const r of results) {
     if (!r.ok) {
-      out.push(t("reply.recordFailed"));
+      lines.push(t("reply.recordFailed"));
       continue;
     }
-    for (const p of r.attachmentPaths) {
-      const name = p.split("/").pop() ?? p;
-      table.push(`| ${cell(name)} | ${cell(p)} |`);
-    }
-    for (const f of r.attachmentFailures) {
-      table.push(`| ${cell(f)} | ${t("reply.attachment.failed")} |`);
-    }
-    for (const a of r.articleAssets) {
-      table.push(`| ${cell(a.title)} | ${cell(a.note)} |`);
-      if (a.assetCount > 0) {
-        table.push(`| ${t("reply.article.assets", { n: a.assetCount, dir: a.assetsDir })} | |`);
-      }
-    }
-    for (const reason of r.articleFailures) {
-      table.push(`| ${cell(t("reply.article.failed"))} | ${cell(reason)} |`);
-    }
+    lines.push(t("reply.done"));
+    for (const f of r.attachmentFailures) lines.push(`${t("reply.attachment.failed")}: ${f}`);
+    for (const reason of r.articleFailures) lines.push(`${t("reply.article.failed")}: ${reason}`);
     if (!r.attachmentPaths.length && !r.attachmentFailures.length && r.linkCount && !r.articleAssets.length && !r.articleFailures.length) {
-      out.push(t("reply.articleFailed", { reason: "unknown" }));
-    }
-    if (!r.attachmentPaths.length && !r.attachmentFailures.length && !r.linkCount && !r.articleAssets.length && !r.articleFailures.length) {
-      out.push(r.appended && r.dailyNote ? `${t("reply.received")} ${r.dailyNote}` : t("reply.received"));
+      lines.push(`${t("reply.article.failed")}: unknown`);
     }
   }
-  if (table.length) {
-    out.unshift(`| ${t("reply.table.file")} | ${t("reply.table.location")} |`, "| --- | --- |", ...table);
-  }
-  return out;
+  return [lines.join("\n")];
 }
 
 // src/core/importer.ts
@@ -2187,10 +2145,10 @@ var WechatianSettingTab = class extends import_obsidian4.PluginSettingTab {
     try {
       const qr = encodeQr(url);
       const n = qr.size + 8;
-      const cell2 = Math.max(3, Math.min(8, Math.floor(240 / n)));
+      const cell = Math.max(3, Math.min(8, Math.floor(240 / n)));
       const canvas = el.createEl("canvas");
-      canvas.width = n * cell2;
-      canvas.height = n * cell2;
+      canvas.width = n * cell;
+      canvas.height = n * cell;
       const ctx = canvas.getContext("2d");
       if (!ctx) return;
       ctx.fillStyle = "#ffffff";
@@ -2200,7 +2158,7 @@ var WechatianSettingTab = class extends import_obsidian4.PluginSettingTab {
       for (let r = 0; r < qr.size; r++) {
         for (let c = 0; c < qr.size; c++) {
           if (qr.isDark(r, c)) {
-            ctx.fillRect((c + quiet) * cell2, (r + quiet) * cell2, cell2, cell2);
+            ctx.fillRect((c + quiet) * cell, (r + quiet) * cell, cell, cell);
           }
         }
       }
@@ -2250,12 +2208,12 @@ var QrLoginModal = class extends import_obsidian5.Modal {
     this.qrEl.empty();
     try {
       const qr = encodeQr(url);
-      const cell2 = 6;
+      const cell = 6;
       const quiet = 4;
       const n = qr.size + quiet * 2;
       const canvas = this.qrEl.createEl("canvas", { cls: "wechatian-qr-canvas" });
-      canvas.width = n * cell2;
-      canvas.height = n * cell2;
+      canvas.width = n * cell;
+      canvas.height = n * cell;
       const ctx = canvas.getContext("2d");
       if (!ctx) return;
       ctx.fillStyle = "#ffffff";
@@ -2264,7 +2222,7 @@ var QrLoginModal = class extends import_obsidian5.Modal {
       for (let r = 0; r < qr.size; r++) {
         for (let c = 0; c < qr.size; c++) {
           if (qr.isDark(r, c)) {
-            ctx.fillRect((c + quiet) * cell2, (r + quiet) * cell2, cell2, cell2);
+            ctx.fillRect((c + quiet) * cell, (r + quiet) * cell, cell, cell);
           }
         }
       }
@@ -2746,12 +2704,13 @@ var WechatianPlugin = class extends import_obsidian6.Plugin {
     return [];
   }
   /**
-   * One batched confirmation reply per polling round: saved files/images in a
-   * table, articles with their note path and image directory, plain messages
-   * with the daily note they landed in. Failures never break the receive flow.
+   * One batched confirmation reply per polling round: a "received and saved"
+   * line per recorded message, with failure reasons attached. Failures never
+   * break the receive flow.
    */
   async sendReceiptReplies(receipts) {
     try {
+      if (!receipts.length) return;
       const to = this.store.get().scannedUser.trim();
       if (!to) return;
       const client = this.client ?? this.makeClient();
