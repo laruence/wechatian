@@ -23,7 +23,8 @@ Your most important conversations happen on WeChat — but they're trapped in th
 - **Agent-ready** — the plugin maintains an `Agent.md` in the inbox folder teaching any AI assistant the outbox protocol; see [Agent.md](Agent.md) in this repo for the full guide
 - **QR login** — scan once; the plugin binds to the scanning account and only accepts messages from it
 - **Configurable paths** — inbox / attachments / articles / outbox folders are all settable
-- **Bilingual UI** — English / 中文 / follow Obsidian
+- **Receipt replies** — once a message is recorded, a confirmation is sent back over WeChat (where the image/file/article was saved); toggle in settings, follows the UI language
+- **Trilingual UI** — English / 简体中文 / 繁體中文 (follows Obsidian by default)
 
 ## Install
 
@@ -151,6 +152,14 @@ The plugin runs on desktop only. But the notes it writes are plain Markdown — 
 
 ---
 
+## Testing
+
+```bash
+npm test   # builds, then runs the node:test suite (scripts/unit-test.js)
+```
+
+Unit tests (`tests/unit.ts`) cover the crypto layer, import pipeline (fake in-memory vault), outbox flush paths, receipt-reply assembly, failure classification, and i18n dictionary parity. CI runs lint, typecheck, tests, and build.
+
 ## 中文说明
 
 > 微信 ↔ Obsidian 双向桥接插件：收消息自动入 vault，agent 往发件箱丢个文件就能给你发微信。走腾讯官方 ilink 机器人网关，数据只落本地。
@@ -160,7 +169,7 @@ The plugin runs on desktop only. But the notes it writes are plain Markdown — 
 - **收**：消息实时写入每日对话笔记（收发同一时间线）；媒体解密存 `attachments/`；链接全文抓取成 markdown 文章笔记存 `articles/`（按公众号分子目录，可关闭），文章配图存各文章目录下的 `assets/`
 - **发**：往 `outbox/` 丢文件——`.md` 作为文本消息发送（**支持 markdown**），图片/视频/文档（≤100MB）作为附件发送
 - **Agent**：插件在收件箱目录维护 `Agent.md`，AI 助手读完即学会发件协议——长任务跑完、需要拍板时主动给你发微信；完整指南见 [Agent.md](Agent.md)
-- **扫码登录**：扫一次即绑定该账号，只接收该账号的消息；路径全部可配置；界面中英双语
+- **扫码登录**：扫一次即绑定该账号，只接收该账号的消息；路径全部可配置；界面中（简/繁）英三语
 
 **快速上手**（约五分钟）：
 

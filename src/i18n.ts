@@ -2,7 +2,8 @@
 import { getLanguage as obsidianLanguage } from 'obsidian';
 
 type Dict = Record<string, string>;
-export type UiLanguage = 'system' | 'en' | 'zh';
+export type UiLanguage = 'system' | 'en' | 'zh' | 'tw';
+export type ResolvedLanguage = 'en' | 'zh' | 'tw';
 
 const en: Dict = {
   'cmd.connect': 'Connect WeChat',
@@ -46,6 +47,8 @@ const en: Dict = {
   'set.groupByAccount': 'Group articles by account',
   'set.groupByAccount.desc': 'Store article notes in a subfolder named after the official account, with its images in an assets subfolder inside it',
   'set.notify': 'Notify on message',
+  'set.autoReply': 'Always reply on receipt',
+  'set.autoReply.desc': 'After a message is recorded, send a confirmation reply back to WeChat — e.g. where an image or article was saved. May be rate-limited by the gateway if you receive many messages.',
   'set.footer': 'Note: this plugin talks to the WeChat ilink gateway directly; messages are stored only in this vault. Proactive sends are rate-limited by the gateway.',
 
   'login.status': 'Login status',
@@ -90,6 +93,26 @@ const en: Dict = {
   'sendTest.failed': 'Send failed: {{err}}',
   'sendTest.notBound': 'Not logged in yet',
   'sendTest.needFirstMessage': 'No send credential yet — send any message to the bot from WeChat first, then retry',
+
+  'reply.received': 'Received ✅',
+  'reply.recorded': 'Received ✅ — recorded to {{path}}',
+  'reply.image': 'Image received ✅ — saved to {{path}}',
+  'reply.file': 'File received ✅ — saved to {{path}}',
+  'reply.article': 'Article saved ✅ — {{path}}',
+  'reply.articleFailed': 'Link received, but fetching the article failed.',
+  'reply.attachFailed': 'Failed to save attachment: {{name}}',
+  'reply.recordFailed': 'Message received, but recording it to the vault failed.',
+
+  'err.noToken': 'No send credential yet',
+  'err.noToken.hint': 'Replying requires a context token handed out by WeChat: first send any message to the bot from WeChat, then retry.',
+  'err.rateLimited': 'Send rejected (rate limit or no permission)',
+  'err.rateLimited.hint': 'The gateway rate-limits proactive sends. Wait a few minutes and retry.',
+  'err.network': 'Network error',
+  'err.network.hint': 'Check the network/connection, then retry.',
+  'err.sessionExpired': 'WeChat session expired',
+  'err.sessionExpired.hint': 'Re-scan the QR code to log in again, then retry.',
+  'err.unknown': 'Send failed: ret={{ret}} {{errmsg}}',
+  'err.unknown.hint': 'Check the network and gateway status, then retry.',
 
   'set.agentGuide': 'Agent guide',
   'set.agentGuide.desc': 'Point your agent (Claude etc.) at {{path}} in the vault — it explains how to send WeChat messages and attachments through the outbox',
@@ -137,6 +160,8 @@ const zh: Dict = {
   'set.groupByAccount': '按公众号分目录',
   'set.groupByAccount.desc': '文章笔记存入以公众号命名的子目录,文章配图存到该目录下的 assets 子目录',
   'set.notify': '来消息时通知',
+  'set.autoReply': '总是回复',
+  'set.autoReply.desc': '消息记录入库后,自动回复一条确认消息(如图片/文章的保存位置)。消息较多时可能触发网关限流。',
   'set.footer': '说明:本插件直接与微信 ilink 网关通信,消息仅保存在本 vault。主动发送受网关限流。',
 
   'login.status': '登录状态',
@@ -182,13 +207,150 @@ const zh: Dict = {
   'sendTest.notBound': '尚未登录',
   'sendTest.needFirstMessage': '还没有发送凭据——请先从微信给机器人发一条消息,再重试',
 
+  'reply.received': '收到 ✅',
+  'reply.recorded': '收到,已记录到 {{path}} ✅',
+  'reply.image': '已收到图片 ✅,保存到 {{path}}',
+  'reply.file': '已收到文件 ✅,保存到 {{path}}',
+  'reply.article': '文章已保存 ✅ {{path}}',
+  'reply.articleFailed': '收到链接,但文章抓取失败。',
+  'reply.attachFailed': '附件保存失败: {{name}}',
+  'reply.recordFailed': '消息已收到,但写入 vault 失败。',
+
+  'err.noToken': '还没有发送凭据',
+  'err.noToken.hint': '回复需要微信下发的 context token——先从微信给机器人发任意一条消息,再重试。',
+  'err.rateLimited': '发送被拒(限流或无权限)',
+  'err.rateLimited.hint': '网关对主动发送有限流,稍等几分钟再试。',
+  'err.network': '网络错误',
+  'err.network.hint': '检查网络/连接后重试。',
+  'err.sessionExpired': '微信会话过期',
+  'err.sessionExpired.hint': '重新扫码登录后再发送。',
+  'err.unknown': '发送失败: ret={{ret}} {{errmsg}}',
+  'err.unknown.hint': '检查网络和网关状态后重试。',
+
   'set.agentGuide': 'Agent 指引',
   'set.agentGuide.desc': '让你的 agent(Claude 等)读取 vault 中的 {{path}},即可学会通过发件箱发送微信消息和附件',
 };
 
+const tw: Dict = {
+  'cmd.connect': '連接微信',
+  'cmd.disconnect': '中斷微信',
+  'cmd.login': '重新掃碼登入',
+  'cmd.inbox': '開啟今日收件匣',
+
+  'notice.notLoggedIn': 'Wechatian:尚未登入,執行指令「{{cmd}}」',
+  'notice.loggedIn': 'Wechatian: 登入成功,開始接收訊息',
+  'notice.loggedOut': 'Wechatian: 已登出,請在設定頁重新掃碼',
+  'notice.sessionExpired': 'Wechatian: 微信工作階段過期,請重新掃碼登入',
+  'error.sessionExpired': '工作階段過期(-14),請重新掃碼登入',
+  'notice.importFailed': 'Wechatian: 匯入失敗 {{err}}',
+  'notice.noMsgToday': '今日暫無訊息({{path}})',
+  'notice.prefix': '微信',
+  'notice.attachments': '{{n}} 個附件',
+
+  'status.disconnected': '未連接',
+  'status.connecting': '連接中',
+  'status.connected': '微信在線',
+  'status.expired': '工作階段過期',
+  'status.error': '連接錯誤',
+
+  'set.language': '語言',
+  'set.language.desc': '設定頁、指令與通知的介面語言',
+  'set.language.system': '跟隨 Obsidian',
+  'set.autoConnect': '啟動時自動連接',
+  'set.autoConnect.desc': 'Obsidian 啟動後自動登入並開始接收微信訊息',
+  'set.inboxFolder': '收件匣目錄',
+  'set.inboxFolder.desc': '每日訊息筆記存放目錄',
+  'set.attachmentFolder': '附件目錄',
+  'set.attachmentFolder.desc': '圖片/檔案/影片/語音存放目錄',
+  'set.articleFolder': '文章目錄',
+  'set.articleFolder.desc': '公眾號/網頁文章筆記存放目錄',
+  'set.outboxFolder': '發件匣目錄',
+  'set.outboxFolder.desc': '給自己的單向通道:agent 在此寫入檔案,.md 作為文字訊息發送,圖片/影片/文件作為附件發送,發送成功後刪除檔案',
+  'set.autoImport': '自動匯入訊息',
+  'set.autoImport.desc': '收到訊息後立即寫入收件匣',
+  'set.fetchArticles': '抓取文章資訊',
+  'set.fetchArticles.desc': '訊息裡的連結自動抓取標題/摘要並建立文章筆記',
+  'set.groupByAccount': '依公眾號分目錄',
+  'set.groupByAccount.desc': '文章筆記存入以公眾號命名的子目錄,文章配圖存到該目錄下的 assets 子目錄',
+  'set.notify': '來訊息時通知',
+  'set.autoReply': '總是回覆',
+  'set.autoReply.desc': '訊息記錄入庫後,自動回覆一條確認訊息(如圖片/文章的儲存位置)。訊息較多時可能觸發閘道器限流。',
+  'set.footer': '說明:本外掛直接與微信 ilink 閘道器通訊,訊息僅儲存在本 vault。主動發送受閘道器限流。',
+
+  'login.status': '登入狀態',
+  'login.bound': '已綁定 · 機器人 {{bot}} · 掃碼使用者 {{user}}',
+  'login.rescan': '重新掃碼',
+  'login.logout': '登出',
+  'login.notLoggedIn': '尚未登入微信。掃描下方二維碼綁定:',
+  'login.fetching': '正在取得二維碼…',
+  'login.waiting': '等待掃碼…',
+  'login.scanned': '已掃碼,請在手機上確認…',
+  'login.success': '登入成功',
+
+  'modal.title': '微信掃碼登入',
+  'modal.hint': '用微信掃描下方二維碼,然後在手機上確認登入。',
+  'modal.renderFailed': '二維碼產生失敗: {{err}}',
+  'modal.openLink': '或點此連結在手機開啟',
+
+  'importer.attachFailed': '附件儲存失敗: {{name}}',
+  'importer.received': '接收',
+  'importer.sent': '發送',
+  'importer.source': '來源',
+  'importer.imported': '收錄時間',
+  'importer.from': '發送者',
+  'importer.summary': '摘要',
+  'importer.inboxTitle': '{{date}} 微信收件匣',
+
+  'outbox.failedNote': 'Wechatian 發送失敗: ret={{ret}} {{msg}}',
+
+  'qr.missingInResponse': 'get_bot_qrcode 回應缺少二維碼: {{resp}}',
+  'qr.refreshFailed': '二維碼重新整理失敗: {{err}}',
+  'qr.queryFailed': '查詢掃碼狀態失敗: {{err}}',
+  'qr.expiredMultiple': '二維碼多次過期,請重試',
+  'qr.confirmMissingCreds': '登入確認但缺少憑證',
+  'qr.timeout': '等待掃碼逾時,請重試',
+
+  'sendTest.name': '測試發送',
+  'sendTest.desc': '發送到你綁定的微信(一對一通道,收件人就是你自己)',
+  'sendTest.send': '發送',
+  'sendTest.placeholder': '輸入要發送的內容',
+  'sendTest.ok': '訊息已發送',
+  'sendTest.empty': '內容為空,沒有可發送的訊息',
+  'sendTest.failed': '發送失敗: {{err}}',
+  'sendTest.notBound': '尚未登入',
+  'sendTest.needFirstMessage': '還沒有發送憑證——請先從微信給機器人發一條訊息,再重試',
+
+  'reply.received': '收到 ✅',
+  'reply.recorded': '收到,已記錄到 {{path}} ✅',
+  'reply.image': '已收到圖片 ✅,儲存到 {{path}}',
+  'reply.file': '已收到檔案 ✅,儲存到 {{path}}',
+  'reply.article': '文章已儲存 ✅ {{path}}',
+  'reply.articleFailed': '收到連結,但文章抓取失敗。',
+  'reply.attachFailed': '附件儲存失敗: {{name}}',
+  'reply.recordFailed': '訊息已收到,但寫入 vault 失敗。',
+
+  'err.noToken': '還沒有發送憑證',
+  'err.noToken.hint': '回覆需要微信下發的 context token——請先從微信給機器人發任意一條訊息,再重試。',
+  'err.rateLimited': '發送被拒(限流或無權限)',
+  'err.rateLimited.hint': '閘道器對主動發送有限流,稍等幾分鐘再試。',
+  'err.network': '網路錯誤',
+  'err.network.hint': '檢查網路/連線後重試。',
+  'err.sessionExpired': '微信工作階段過期',
+  'err.sessionExpired.hint': '重新掃碼登入後再發送。',
+  'err.unknown': '發送失敗: ret={{ret}} {{errmsg}}',
+  'err.unknown.hint': '檢查網路和閘道器狀態後重試。',
+
+  'set.agentGuide': 'Agent 指引',
+  'set.agentGuide.desc': '讓你的 agent(Claude 等)讀取 vault 中的 {{path}},即可學會透過發件匣發送微信訊息和附件',
+};
+
 function detectDict(): Dict {
   try {
-    return obsidianLanguage().toLowerCase().startsWith('zh') ? zh : en;
+    const lang = obsidianLanguage().toLowerCase();
+    if (lang.startsWith('zh')) {
+      return lang.includes('tw') || lang.includes('hk') || lang.includes('hant') ? tw : zh;
+    }
+    return en;
   } catch {
     return en;
   }
@@ -196,14 +358,17 @@ function detectDict(): Dict {
 
 let dict: Dict = detectDict();
 
+/** Dictionary exports for testing (key parity + language-specific assertions) */
+export const dictionaries = { en, zh, tw };
+
 /** Apply the user's language choice; 'system' re-detects Obsidian's language */
 export function applyLanguage(lang: UiLanguage): void {
-  dict = lang === 'system' ? detectDict() : lang === 'zh' ? zh : en;
+  dict = lang === 'system' ? detectDict() : lang === 'zh' ? zh : lang === 'tw' ? tw : en;
 }
 
 /** The concrete dictionary currently in effect ('system' already resolved) */
-export function resolvedLanguage(): 'en' | 'zh' {
-  return dict === zh ? 'zh' : 'en';
+export function resolvedLanguage(): ResolvedLanguage {
+  return dict === zh ? 'zh' : dict === tw ? 'tw' : 'en';
 }
 
 export function t(key: string, vars?: Record<string, string | number>): string {
@@ -214,4 +379,75 @@ export function t(key: string, vars?: Record<string, string | number>): string {
     }
   }
   return s;
+}
+
+/** Why a send failed — drives the localized reason + fix hint shown to the user */
+export type SendFailureCategory = 'noToken' | 'rateLimited' | 'network' | 'sessionExpired' | 'unknown';
+
+export function classifySendFailure(input: {
+  ret: number;
+  errmsg: string;
+  contextToken: string;
+}): SendFailureCategory {
+  const msg = input.errmsg.toLowerCase();
+  if (!input.contextToken.trim() || /context[_ ]?token/.test(msg)) return 'noToken';
+  if (msg.includes('session expired') || msg.includes('会话过期') || msg.includes('會話過期')) return 'sessionExpired';
+  if (/fetch failed|network|econn|etimedout|socket hang up|abort/.test(msg)) return 'network';
+  if (/no permission|permission denied/.test(msg)) return 'rateLimited';
+  if (input.ret === -14 || input.ret === -20) return 'sessionExpired';
+  if (input.ret !== 0) return 'rateLimited';
+  return 'unknown';
+}
+
+/** One localized line pair — "reason — how to fix it" — for a failed send */
+export function buildSendFailure(errmsg: string, ret: number, contextToken = ''): string {
+  const cat = classifySendFailure({ ret, errmsg, contextToken });
+  if (cat === 'noToken') return `${t('err.noToken')} — ${t('err.noToken.hint')}`;
+  if (cat === 'rateLimited') return `${t('err.rateLimited')} — ${t('err.rateLimited.hint')}`;
+  if (cat === 'network') return `${t('err.network')} — ${t('err.network.hint')}`;
+  if (cat === 'sessionExpired') return `${t('err.sessionExpired')} — ${t('err.sessionExpired.hint')}`;
+  return `${t('err.unknown', { ret: String(ret), errmsg: errmsg.trim() || '?' })} — ${t('err.unknown.hint')}`;
+}
+
+/** Summary of one inbound message's import result — feeds the receipt reply */
+export interface ReceiptReplyInput {
+  ok: boolean; // whether recording into the vault succeeded at all
+  appended: boolean; // whether the daily-note append succeeded
+  dailyNote: string; // path of the daily conversation note
+  attachmentPaths: string[]; // saved attachment paths
+  attachmentFailures: string[]; // attachment names that failed to save
+  linkCount: number; // links found in the message text
+  articleNotes: string[]; // created article note paths
+}
+
+/**
+ * Assemble the confirmation reply sent back after recording an inbound message:
+ * images/files report their saved paths, articles report the note path (or a
+ * fetch failure), plain text confirms the daily note the entry was recorded to.
+ * Pure function so the logic is unit-testable.
+ */
+export function buildReceiptReply(r: ReceiptReplyInput): string[] {
+  if (!r.ok) return [t('reply.recordFailed')];
+  const lines: string[] = [];
+  if (r.attachmentPaths.length) {
+    const first = r.attachmentPaths[0];
+    const key = /\.(jpe?g|png|gif|webp|bmp)$/i.test(first) ? 'reply.image' : 'reply.file';
+    lines.push(t(key, { path: first }));
+    for (const extra of r.attachmentPaths.slice(1)) {
+      lines.push(`· ${extra}`);
+    }
+  }
+  if (r.attachmentFailures.length) {
+    lines.push(t('reply.attachFailed', { name: r.attachmentFailures.join(', ') }));
+  }
+  for (const note of r.articleNotes) {
+    lines.push(t('reply.article', { path: note }));
+  }
+  if (!r.attachmentPaths.length && !r.attachmentFailures.length && r.linkCount && !r.articleNotes.length) {
+    lines.push(t('reply.articleFailed'));
+  }
+  if (!lines.length) {
+    lines.push(r.appended && r.dailyNote ? t('reply.recorded', { path: r.dailyNote }) : t('reply.received'));
+  }
+  return lines;
 }

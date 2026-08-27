@@ -350,7 +350,8 @@ export class IlinkClient {
         const r = await this.transport.post(url, { 'Content-Type': 'application/octet-stream' }, body, 120_000);
         if (r.status >= 400 && r.status < 500) {
           const msg = r.headers['x-error-message'] || `http ${r.status}`;
-          throw new Error(`CDN upload client error: ${msg}`);
+          // HttpError so the catch below fails fast on client errors (retrying is pointless)
+          throw new HttpError(`CDN upload client error: ${msg}`, r.status);
         }
         if (r.status !== 200) {
           lastErr = r.headers['x-error-message'] || `http ${r.status}`;

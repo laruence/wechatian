@@ -4,6 +4,9 @@ node_modules/
 # 本地冒烟脚本(开发用,不分发)
 scripts/
 
+# 测试覆盖率产物
+coverage/
+
 # 运行状态与本地数据
 state.json
 data.json

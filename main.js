@@ -378,7 +378,7 @@ var IlinkClient = class {
         const r = await this.transport.post(url, { "Content-Type": "application/octet-stream" }, body, 12e4);
         if (r.status >= 400 && r.status < 500) {
           const msg = r.headers["x-error-message"] || `http ${r.status}`;
-          throw new Error(`CDN upload client error: ${msg}`);
+          throw new HttpError(`CDN upload client error: ${msg}`, r.status);
         }
         if (r.status !== 200) {
           lastErr = r.headers["x-error-message"] || `http ${r.status}`;
@@ -706,7 +706,7 @@ function extractLinks(text) {
   }
   return out;
 }
-async function fetchArticle(transport, url) {
+async function fetchArticle(transport, url, parseHtml) {
   try {
     const resp = await transport.get(
       url,
@@ -720,7 +720,8 @@ async function fetchArticle(transport, url) {
     );
     if (resp.status !== 200) return null;
     const html = await bodyTextAuto(resp);
-    const doc = new DOMParser().parseFromString(html, "text/html");
+    const parse = parseHtml ?? ((h) => new DOMParser().parseFromString(h, "text/html"));
+    const doc = parse(html);
     const title = doc.querySelector('meta[property="og:title"]')?.getAttribute("content") ?? doc.title ?? "";
     if (!title.trim()) return null;
     const description = doc.querySelector('meta[property="og:description"]')?.getAttribute("content") ?? doc.querySelector('meta[name="description"]')?.getAttribute("content") ?? "";
@@ -903,6 +904,8 @@ var en = {
   "set.groupByAccount": "Group articles by account",
   "set.groupByAccount.desc": "Store article notes in a subfolder named after the official account, with its images in an assets subfolder inside it",
   "set.notify": "Notify on message",
+  "set.autoReply": "Always reply on receipt",
+  "set.autoReply.desc": "After a message is recorded, send a confirmation reply back to WeChat \u2014 e.g. where an image or article was saved. May be rate-limited by the gateway if you receive many messages.",
   "set.footer": "Note: this plugin talks to the WeChat ilink gateway directly; messages are stored only in this vault. Proactive sends are rate-limited by the gateway.",
   "login.status": "Login status",
   "login.bound": "Bound \xB7 bot {{bot}} \xB7 scanning user {{user}}",
@@ -941,6 +944,24 @@ var en = {
   "sendTest.failed": "Send failed: {{err}}",
   "sendTest.notBound": "Not logged in yet",
   "sendTest.needFirstMessage": "No send credential yet \u2014 send any message to the bot from WeChat first, then retry",
+  "reply.received": "Received \u2705",
+  "reply.recorded": "Received \u2705 \u2014 recorded to {{path}}",
+  "reply.image": "Image received \u2705 \u2014 saved to {{path}}",
+  "reply.file": "File received \u2705 \u2014 saved to {{path}}",
+  "reply.article": "Article saved \u2705 \u2014 {{path}}",
+  "reply.articleFailed": "Link received, but fetching the article failed.",
+  "reply.attachFailed": "Failed to save attachment: {{name}}",
+  "reply.recordFailed": "Message received, but recording it to the vault failed.",
+  "err.noToken": "No send credential yet",
+  "err.noToken.hint": "Replying requires a context token handed out by WeChat: first send any message to the bot from WeChat, then retry.",
+  "err.rateLimited": "Send rejected (rate limit or no permission)",
+  "err.rateLimited.hint": "The gateway rate-limits proactive sends. Wait a few minutes and retry.",
+  "err.network": "Network error",
+  "err.network.hint": "Check the network/connection, then retry.",
+  "err.sessionExpired": "WeChat session expired",
+  "err.sessionExpired.hint": "Re-scan the QR code to log in again, then retry.",
+  "err.unknown": "Send failed: ret={{ret}} {{errmsg}}",
+  "err.unknown.hint": "Check the network and gateway status, then retry.",
   "set.agentGuide": "Agent guide",
   "set.agentGuide.desc": "Point your agent (Claude etc.) at {{path}} in the vault \u2014 it explains how to send WeChat messages and attachments through the outbox"
 };
@@ -983,6 +1004,8 @@ var zh = {
   "set.groupByAccount": "\u6309\u516C\u4F17\u53F7\u5206\u76EE\u5F55",
   "set.groupByAccount.desc": "\u6587\u7AE0\u7B14\u8BB0\u5B58\u5165\u4EE5\u516C\u4F17\u53F7\u547D\u540D\u7684\u5B50\u76EE\u5F55,\u6587\u7AE0\u914D\u56FE\u5B58\u5230\u8BE5\u76EE\u5F55\u4E0B\u7684 assets \u5B50\u76EE\u5F55",
   "set.notify": "\u6765\u6D88\u606F\u65F6\u901A\u77E5",
+  "set.autoReply": "\u603B\u662F\u56DE\u590D",
+  "set.autoReply.desc": "\u6D88\u606F\u8BB0\u5F55\u5165\u5E93\u540E,\u81EA\u52A8\u56DE\u590D\u4E00\u6761\u786E\u8BA4\u6D88\u606F(\u5982\u56FE\u7247/\u6587\u7AE0\u7684\u4FDD\u5B58\u4F4D\u7F6E)\u3002\u6D88\u606F\u8F83\u591A\u65F6\u53EF\u80FD\u89E6\u53D1\u7F51\u5173\u9650\u6D41\u3002",
   "set.footer": "\u8BF4\u660E:\u672C\u63D2\u4EF6\u76F4\u63A5\u4E0E\u5FAE\u4FE1 ilink \u7F51\u5173\u901A\u4FE1,\u6D88\u606F\u4EC5\u4FDD\u5B58\u5728\u672C vault\u3002\u4E3B\u52A8\u53D1\u9001\u53D7\u7F51\u5173\u9650\u6D41\u3002",
   "login.status": "\u767B\u5F55\u72B6\u6001",
   "login.bound": "\u5DF2\u7ED1\u5B9A \xB7 \u673A\u5668\u4EBA {{bot}} \xB7 \u626B\u7801\u7528\u6237 {{user}}",
@@ -1021,22 +1044,144 @@ var zh = {
   "sendTest.failed": "\u53D1\u9001\u5931\u8D25: {{err}}",
   "sendTest.notBound": "\u5C1A\u672A\u767B\u5F55",
   "sendTest.needFirstMessage": "\u8FD8\u6CA1\u6709\u53D1\u9001\u51ED\u636E\u2014\u2014\u8BF7\u5148\u4ECE\u5FAE\u4FE1\u7ED9\u673A\u5668\u4EBA\u53D1\u4E00\u6761\u6D88\u606F,\u518D\u91CD\u8BD5",
+  "reply.received": "\u6536\u5230 \u2705",
+  "reply.recorded": "\u6536\u5230,\u5DF2\u8BB0\u5F55\u5230 {{path}} \u2705",
+  "reply.image": "\u5DF2\u6536\u5230\u56FE\u7247 \u2705,\u4FDD\u5B58\u5230 {{path}}",
+  "reply.file": "\u5DF2\u6536\u5230\u6587\u4EF6 \u2705,\u4FDD\u5B58\u5230 {{path}}",
+  "reply.article": "\u6587\u7AE0\u5DF2\u4FDD\u5B58 \u2705 {{path}}",
+  "reply.articleFailed": "\u6536\u5230\u94FE\u63A5,\u4F46\u6587\u7AE0\u6293\u53D6\u5931\u8D25\u3002",
+  "reply.attachFailed": "\u9644\u4EF6\u4FDD\u5B58\u5931\u8D25: {{name}}",
+  "reply.recordFailed": "\u6D88\u606F\u5DF2\u6536\u5230,\u4F46\u5199\u5165 vault \u5931\u8D25\u3002",
+  "err.noToken": "\u8FD8\u6CA1\u6709\u53D1\u9001\u51ED\u636E",
+  "err.noToken.hint": "\u56DE\u590D\u9700\u8981\u5FAE\u4FE1\u4E0B\u53D1\u7684 context token\u2014\u2014\u5148\u4ECE\u5FAE\u4FE1\u7ED9\u673A\u5668\u4EBA\u53D1\u4EFB\u610F\u4E00\u6761\u6D88\u606F,\u518D\u91CD\u8BD5\u3002",
+  "err.rateLimited": "\u53D1\u9001\u88AB\u62D2(\u9650\u6D41\u6216\u65E0\u6743\u9650)",
+  "err.rateLimited.hint": "\u7F51\u5173\u5BF9\u4E3B\u52A8\u53D1\u9001\u6709\u9650\u6D41,\u7A0D\u7B49\u51E0\u5206\u949F\u518D\u8BD5\u3002",
+  "err.network": "\u7F51\u7EDC\u9519\u8BEF",
+  "err.network.hint": "\u68C0\u67E5\u7F51\u7EDC/\u8FDE\u63A5\u540E\u91CD\u8BD5\u3002",
+  "err.sessionExpired": "\u5FAE\u4FE1\u4F1A\u8BDD\u8FC7\u671F",
+  "err.sessionExpired.hint": "\u91CD\u65B0\u626B\u7801\u767B\u5F55\u540E\u518D\u53D1\u9001\u3002",
+  "err.unknown": "\u53D1\u9001\u5931\u8D25: ret={{ret}} {{errmsg}}",
+  "err.unknown.hint": "\u68C0\u67E5\u7F51\u7EDC\u548C\u7F51\u5173\u72B6\u6001\u540E\u91CD\u8BD5\u3002",
   "set.agentGuide": "Agent \u6307\u5F15",
   "set.agentGuide.desc": "\u8BA9\u4F60\u7684 agent(Claude \u7B49)\u8BFB\u53D6 vault \u4E2D\u7684 {{path}},\u5373\u53EF\u5B66\u4F1A\u901A\u8FC7\u53D1\u4EF6\u7BB1\u53D1\u9001\u5FAE\u4FE1\u6D88\u606F\u548C\u9644\u4EF6"
 };
+var tw = {
+  "cmd.connect": "\u9023\u63A5\u5FAE\u4FE1",
+  "cmd.disconnect": "\u4E2D\u65B7\u5FAE\u4FE1",
+  "cmd.login": "\u91CD\u65B0\u6383\u78BC\u767B\u5165",
+  "cmd.inbox": "\u958B\u555F\u4ECA\u65E5\u6536\u4EF6\u5323",
+  "notice.notLoggedIn": "Wechatian:\u5C1A\u672A\u767B\u5165,\u57F7\u884C\u6307\u4EE4\u300C{{cmd}}\u300D",
+  "notice.loggedIn": "Wechatian: \u767B\u5165\u6210\u529F,\u958B\u59CB\u63A5\u6536\u8A0A\u606F",
+  "notice.loggedOut": "Wechatian: \u5DF2\u767B\u51FA,\u8ACB\u5728\u8A2D\u5B9A\u9801\u91CD\u65B0\u6383\u78BC",
+  "notice.sessionExpired": "Wechatian: \u5FAE\u4FE1\u5DE5\u4F5C\u968E\u6BB5\u904E\u671F,\u8ACB\u91CD\u65B0\u6383\u78BC\u767B\u5165",
+  "error.sessionExpired": "\u5DE5\u4F5C\u968E\u6BB5\u904E\u671F(-14),\u8ACB\u91CD\u65B0\u6383\u78BC\u767B\u5165",
+  "notice.importFailed": "Wechatian: \u532F\u5165\u5931\u6557 {{err}}",
+  "notice.noMsgToday": "\u4ECA\u65E5\u66AB\u7121\u8A0A\u606F({{path}})",
+  "notice.prefix": "\u5FAE\u4FE1",
+  "notice.attachments": "{{n}} \u500B\u9644\u4EF6",
+  "status.disconnected": "\u672A\u9023\u63A5",
+  "status.connecting": "\u9023\u63A5\u4E2D",
+  "status.connected": "\u5FAE\u4FE1\u5728\u7DDA",
+  "status.expired": "\u5DE5\u4F5C\u968E\u6BB5\u904E\u671F",
+  "status.error": "\u9023\u63A5\u932F\u8AA4",
+  "set.language": "\u8A9E\u8A00",
+  "set.language.desc": "\u8A2D\u5B9A\u9801\u3001\u6307\u4EE4\u8207\u901A\u77E5\u7684\u4ECB\u9762\u8A9E\u8A00",
+  "set.language.system": "\u8DDF\u96A8 Obsidian",
+  "set.autoConnect": "\u555F\u52D5\u6642\u81EA\u52D5\u9023\u63A5",
+  "set.autoConnect.desc": "Obsidian \u555F\u52D5\u5F8C\u81EA\u52D5\u767B\u5165\u4E26\u958B\u59CB\u63A5\u6536\u5FAE\u4FE1\u8A0A\u606F",
+  "set.inboxFolder": "\u6536\u4EF6\u5323\u76EE\u9304",
+  "set.inboxFolder.desc": "\u6BCF\u65E5\u8A0A\u606F\u7B46\u8A18\u5B58\u653E\u76EE\u9304",
+  "set.attachmentFolder": "\u9644\u4EF6\u76EE\u9304",
+  "set.attachmentFolder.desc": "\u5716\u7247/\u6A94\u6848/\u5F71\u7247/\u8A9E\u97F3\u5B58\u653E\u76EE\u9304",
+  "set.articleFolder": "\u6587\u7AE0\u76EE\u9304",
+  "set.articleFolder.desc": "\u516C\u773E\u865F/\u7DB2\u9801\u6587\u7AE0\u7B46\u8A18\u5B58\u653E\u76EE\u9304",
+  "set.outboxFolder": "\u767C\u4EF6\u5323\u76EE\u9304",
+  "set.outboxFolder.desc": "\u7D66\u81EA\u5DF1\u7684\u55AE\u5411\u901A\u9053:agent \u5728\u6B64\u5BEB\u5165\u6A94\u6848,.md \u4F5C\u70BA\u6587\u5B57\u8A0A\u606F\u767C\u9001,\u5716\u7247/\u5F71\u7247/\u6587\u4EF6\u4F5C\u70BA\u9644\u4EF6\u767C\u9001,\u767C\u9001\u6210\u529F\u5F8C\u522A\u9664\u6A94\u6848",
+  "set.autoImport": "\u81EA\u52D5\u532F\u5165\u8A0A\u606F",
+  "set.autoImport.desc": "\u6536\u5230\u8A0A\u606F\u5F8C\u7ACB\u5373\u5BEB\u5165\u6536\u4EF6\u5323",
+  "set.fetchArticles": "\u6293\u53D6\u6587\u7AE0\u8CC7\u8A0A",
+  "set.fetchArticles.desc": "\u8A0A\u606F\u88E1\u7684\u9023\u7D50\u81EA\u52D5\u6293\u53D6\u6A19\u984C/\u6458\u8981\u4E26\u5EFA\u7ACB\u6587\u7AE0\u7B46\u8A18",
+  "set.groupByAccount": "\u4F9D\u516C\u773E\u865F\u5206\u76EE\u9304",
+  "set.groupByAccount.desc": "\u6587\u7AE0\u7B46\u8A18\u5B58\u5165\u4EE5\u516C\u773E\u865F\u547D\u540D\u7684\u5B50\u76EE\u9304,\u6587\u7AE0\u914D\u5716\u5B58\u5230\u8A72\u76EE\u9304\u4E0B\u7684 assets \u5B50\u76EE\u9304",
+  "set.notify": "\u4F86\u8A0A\u606F\u6642\u901A\u77E5",
+  "set.autoReply": "\u7E3D\u662F\u56DE\u8986",
+  "set.autoReply.desc": "\u8A0A\u606F\u8A18\u9304\u5165\u5EAB\u5F8C,\u81EA\u52D5\u56DE\u8986\u4E00\u689D\u78BA\u8A8D\u8A0A\u606F(\u5982\u5716\u7247/\u6587\u7AE0\u7684\u5132\u5B58\u4F4D\u7F6E)\u3002\u8A0A\u606F\u8F03\u591A\u6642\u53EF\u80FD\u89F8\u767C\u9598\u9053\u5668\u9650\u6D41\u3002",
+  "set.footer": "\u8AAA\u660E:\u672C\u5916\u639B\u76F4\u63A5\u8207\u5FAE\u4FE1 ilink \u9598\u9053\u5668\u901A\u8A0A,\u8A0A\u606F\u50C5\u5132\u5B58\u5728\u672C vault\u3002\u4E3B\u52D5\u767C\u9001\u53D7\u9598\u9053\u5668\u9650\u6D41\u3002",
+  "login.status": "\u767B\u5165\u72C0\u614B",
+  "login.bound": "\u5DF2\u7D81\u5B9A \xB7 \u6A5F\u5668\u4EBA {{bot}} \xB7 \u6383\u78BC\u4F7F\u7528\u8005 {{user}}",
+  "login.rescan": "\u91CD\u65B0\u6383\u78BC",
+  "login.logout": "\u767B\u51FA",
+  "login.notLoggedIn": "\u5C1A\u672A\u767B\u5165\u5FAE\u4FE1\u3002\u6383\u63CF\u4E0B\u65B9\u4E8C\u7DAD\u78BC\u7D81\u5B9A:",
+  "login.fetching": "\u6B63\u5728\u53D6\u5F97\u4E8C\u7DAD\u78BC\u2026",
+  "login.waiting": "\u7B49\u5F85\u6383\u78BC\u2026",
+  "login.scanned": "\u5DF2\u6383\u78BC,\u8ACB\u5728\u624B\u6A5F\u4E0A\u78BA\u8A8D\u2026",
+  "login.success": "\u767B\u5165\u6210\u529F",
+  "modal.title": "\u5FAE\u4FE1\u6383\u78BC\u767B\u5165",
+  "modal.hint": "\u7528\u5FAE\u4FE1\u6383\u63CF\u4E0B\u65B9\u4E8C\u7DAD\u78BC,\u7136\u5F8C\u5728\u624B\u6A5F\u4E0A\u78BA\u8A8D\u767B\u5165\u3002",
+  "modal.renderFailed": "\u4E8C\u7DAD\u78BC\u7522\u751F\u5931\u6557: {{err}}",
+  "modal.openLink": "\u6216\u9EDE\u6B64\u9023\u7D50\u5728\u624B\u6A5F\u958B\u555F",
+  "importer.attachFailed": "\u9644\u4EF6\u5132\u5B58\u5931\u6557: {{name}}",
+  "importer.received": "\u63A5\u6536",
+  "importer.sent": "\u767C\u9001",
+  "importer.source": "\u4F86\u6E90",
+  "importer.imported": "\u6536\u9304\u6642\u9593",
+  "importer.from": "\u767C\u9001\u8005",
+  "importer.summary": "\u6458\u8981",
+  "importer.inboxTitle": "{{date}} \u5FAE\u4FE1\u6536\u4EF6\u5323",
+  "outbox.failedNote": "Wechatian \u767C\u9001\u5931\u6557: ret={{ret}} {{msg}}",
+  "qr.missingInResponse": "get_bot_qrcode \u56DE\u61C9\u7F3A\u5C11\u4E8C\u7DAD\u78BC: {{resp}}",
+  "qr.refreshFailed": "\u4E8C\u7DAD\u78BC\u91CD\u65B0\u6574\u7406\u5931\u6557: {{err}}",
+  "qr.queryFailed": "\u67E5\u8A62\u6383\u78BC\u72C0\u614B\u5931\u6557: {{err}}",
+  "qr.expiredMultiple": "\u4E8C\u7DAD\u78BC\u591A\u6B21\u904E\u671F,\u8ACB\u91CD\u8A66",
+  "qr.confirmMissingCreds": "\u767B\u5165\u78BA\u8A8D\u4F46\u7F3A\u5C11\u6191\u8B49",
+  "qr.timeout": "\u7B49\u5F85\u6383\u78BC\u903E\u6642,\u8ACB\u91CD\u8A66",
+  "sendTest.name": "\u6E2C\u8A66\u767C\u9001",
+  "sendTest.desc": "\u767C\u9001\u5230\u4F60\u7D81\u5B9A\u7684\u5FAE\u4FE1(\u4E00\u5C0D\u4E00\u901A\u9053,\u6536\u4EF6\u4EBA\u5C31\u662F\u4F60\u81EA\u5DF1)",
+  "sendTest.send": "\u767C\u9001",
+  "sendTest.placeholder": "\u8F38\u5165\u8981\u767C\u9001\u7684\u5167\u5BB9",
+  "sendTest.ok": "\u8A0A\u606F\u5DF2\u767C\u9001",
+  "sendTest.empty": "\u5167\u5BB9\u70BA\u7A7A,\u6C92\u6709\u53EF\u767C\u9001\u7684\u8A0A\u606F",
+  "sendTest.failed": "\u767C\u9001\u5931\u6557: {{err}}",
+  "sendTest.notBound": "\u5C1A\u672A\u767B\u5165",
+  "sendTest.needFirstMessage": "\u9084\u6C92\u6709\u767C\u9001\u6191\u8B49\u2014\u2014\u8ACB\u5148\u5F9E\u5FAE\u4FE1\u7D66\u6A5F\u5668\u4EBA\u767C\u4E00\u689D\u8A0A\u606F,\u518D\u91CD\u8A66",
+  "reply.received": "\u6536\u5230 \u2705",
+  "reply.recorded": "\u6536\u5230,\u5DF2\u8A18\u9304\u5230 {{path}} \u2705",
+  "reply.image": "\u5DF2\u6536\u5230\u5716\u7247 \u2705,\u5132\u5B58\u5230 {{path}}",
+  "reply.file": "\u5DF2\u6536\u5230\u6A94\u6848 \u2705,\u5132\u5B58\u5230 {{path}}",
+  "reply.article": "\u6587\u7AE0\u5DF2\u5132\u5B58 \u2705 {{path}}",
+  "reply.articleFailed": "\u6536\u5230\u9023\u7D50,\u4F46\u6587\u7AE0\u6293\u53D6\u5931\u6557\u3002",
+  "reply.attachFailed": "\u9644\u4EF6\u5132\u5B58\u5931\u6557: {{name}}",
+  "reply.recordFailed": "\u8A0A\u606F\u5DF2\u6536\u5230,\u4F46\u5BEB\u5165 vault \u5931\u6557\u3002",
+  "err.noToken": "\u9084\u6C92\u6709\u767C\u9001\u6191\u8B49",
+  "err.noToken.hint": "\u56DE\u8986\u9700\u8981\u5FAE\u4FE1\u4E0B\u767C\u7684 context token\u2014\u2014\u8ACB\u5148\u5F9E\u5FAE\u4FE1\u7D66\u6A5F\u5668\u4EBA\u767C\u4EFB\u610F\u4E00\u689D\u8A0A\u606F,\u518D\u91CD\u8A66\u3002",
+  "err.rateLimited": "\u767C\u9001\u88AB\u62D2(\u9650\u6D41\u6216\u7121\u6B0A\u9650)",
+  "err.rateLimited.hint": "\u9598\u9053\u5668\u5C0D\u4E3B\u52D5\u767C\u9001\u6709\u9650\u6D41,\u7A0D\u7B49\u5E7E\u5206\u9418\u518D\u8A66\u3002",
+  "err.network": "\u7DB2\u8DEF\u932F\u8AA4",
+  "err.network.hint": "\u6AA2\u67E5\u7DB2\u8DEF/\u9023\u7DDA\u5F8C\u91CD\u8A66\u3002",
+  "err.sessionExpired": "\u5FAE\u4FE1\u5DE5\u4F5C\u968E\u6BB5\u904E\u671F",
+  "err.sessionExpired.hint": "\u91CD\u65B0\u6383\u78BC\u767B\u5165\u5F8C\u518D\u767C\u9001\u3002",
+  "err.unknown": "\u767C\u9001\u5931\u6557: ret={{ret}} {{errmsg}}",
+  "err.unknown.hint": "\u6AA2\u67E5\u7DB2\u8DEF\u548C\u9598\u9053\u5668\u72C0\u614B\u5F8C\u91CD\u8A66\u3002",
+  "set.agentGuide": "Agent \u6307\u5F15",
+  "set.agentGuide.desc": "\u8B93\u4F60\u7684 agent(Claude \u7B49)\u8B80\u53D6 vault \u4E2D\u7684 {{path}},\u5373\u53EF\u5B78\u6703\u900F\u904E\u767C\u4EF6\u5323\u767C\u9001\u5FAE\u4FE1\u8A0A\u606F\u548C\u9644\u4EF6"
+};
 function detectDict() {
   try {
-    return (0, import_obsidian2.getLanguage)().toLowerCase().startsWith("zh") ? zh : en;
+    const lang = (0, import_obsidian2.getLanguage)().toLowerCase();
+    if (lang.startsWith("zh")) {
+      return lang.includes("tw") || lang.includes("hk") || lang.includes("hant") ? tw : zh;
+    }
+    return en;
   } catch {
     return en;
   }
 }
 var dict = detectDict();
 function applyLanguage(lang) {
-  dict = lang === "system" ? detectDict() : lang === "zh" ? zh : en;
+  dict = lang === "system" ? detectDict() : lang === "zh" ? zh : lang === "tw" ? tw : en;
 }
 function resolvedLanguage() {
-  return dict === zh ? "zh" : "en";
+  return dict === zh ? "zh" : dict === tw ? "tw" : "en";
 }
 function t(key, vars) {
   let s = dict[key] ?? en[key] ?? key;
@@ -1046,6 +1191,49 @@ function t(key, vars) {
     }
   }
   return s;
+}
+function classifySendFailure(input) {
+  const msg = input.errmsg.toLowerCase();
+  if (!input.contextToken.trim() || /context[_ ]?token/.test(msg)) return "noToken";
+  if (msg.includes("session expired") || msg.includes("\u4F1A\u8BDD\u8FC7\u671F") || msg.includes("\u6703\u8A71\u904E\u671F")) return "sessionExpired";
+  if (/fetch failed|network|econn|etimedout|socket hang up|abort/.test(msg)) return "network";
+  if (/no permission|permission denied/.test(msg)) return "rateLimited";
+  if (input.ret === -14 || input.ret === -20) return "sessionExpired";
+  if (input.ret !== 0) return "rateLimited";
+  return "unknown";
+}
+function buildSendFailure(errmsg, ret, contextToken = "") {
+  const cat = classifySendFailure({ ret, errmsg, contextToken });
+  if (cat === "noToken") return `${t("err.noToken")} \u2014 ${t("err.noToken.hint")}`;
+  if (cat === "rateLimited") return `${t("err.rateLimited")} \u2014 ${t("err.rateLimited.hint")}`;
+  if (cat === "network") return `${t("err.network")} \u2014 ${t("err.network.hint")}`;
+  if (cat === "sessionExpired") return `${t("err.sessionExpired")} \u2014 ${t("err.sessionExpired.hint")}`;
+  return `${t("err.unknown", { ret: String(ret), errmsg: errmsg.trim() || "?" })} \u2014 ${t("err.unknown.hint")}`;
+}
+function buildReceiptReply(r) {
+  if (!r.ok) return [t("reply.recordFailed")];
+  const lines = [];
+  if (r.attachmentPaths.length) {
+    const first = r.attachmentPaths[0];
+    const key = /\.(jpe?g|png|gif|webp|bmp)$/i.test(first) ? "reply.image" : "reply.file";
+    lines.push(t(key, { path: first }));
+    for (const extra of r.attachmentPaths.slice(1)) {
+      lines.push(`\xB7 ${extra}`);
+    }
+  }
+  if (r.attachmentFailures.length) {
+    lines.push(t("reply.attachFailed", { name: r.attachmentFailures.join(", ") }));
+  }
+  for (const note of r.articleNotes) {
+    lines.push(t("reply.article", { path: note }));
+  }
+  if (!r.attachmentPaths.length && !r.attachmentFailures.length && r.linkCount && !r.articleNotes.length) {
+    lines.push(t("reply.articleFailed"));
+  }
+  if (!lines.length) {
+    lines.push(r.appended && r.dailyNote ? t("reply.recorded", { path: r.dailyNote }) : t("reply.received"));
+  }
+  return lines;
 }
 
 // src/core/importer.ts
@@ -1077,17 +1265,25 @@ async function ensureFolder(app, folder) {
   void import_obsidian3.TFolder;
 }
 async function importMessage(app, transport, msg, settings) {
-  const result = { appended: false, articleNotes: [] };
+  const result = {
+    appended: false,
+    dailyNote: "",
+    articleNotes: [],
+    attachmentPaths: [],
+    attachmentFailures: [],
+    linkCount: 0
+  };
   await ensureFolder(app, settings.inboxFolder);
   await ensureFolder(app, settings.attachmentFolder);
   await ensureFolder(app, settings.articleFolder);
   const lines = [];
   lines.push(`**${timeOfDay(msg.timeMs)}** \xB7 ${t("importer.received")}`);
   const links = extractLinks(msg.text);
+  result.linkCount = links.length;
   let display = msg.text.trim();
   if (settings.fetchArticles && links.length) {
     for (const url of links.slice(0, 5)) {
-      const info = await fetchArticle(transport, url);
+      const info = await fetchArticle(transport, url, settings.parseHtml);
       if (!info) continue;
       const title = info.title;
       const accountDir = settings.groupArticlesByAccount && info.account ? `/${sanitizeFileName(info.account)}` : "";
@@ -1144,12 +1340,15 @@ async function importMessage(app, transport, msg, settings) {
     try {
       const ab = att.data.buffer.slice(att.data.byteOffset, att.data.byteOffset + att.data.byteLength);
       await app.vault.adapter.writeBinary(path, ab);
+      result.attachmentPaths.push(path);
       const embed = att.kind === "image" ? `![[${path}]]` : `[[${path}|${att.name}]]`;
       lines.push("", ...quoteBlock(embed));
     } catch {
+      result.attachmentFailures.push(att.name);
       lines.push("", ...quoteBlock(t("importer.attachFailed", { name: att.name })));
     }
   }
+  result.dailyNote = `${settings.inboxFolder}/${dayStamp(msg.timeMs)}.md`;
   result.appended = await appendDaily(app, settings.inboxFolder, msg.timeMs, msg.from, lines);
   return result;
 }
@@ -1250,9 +1449,38 @@ paths: "${pathsKey(s)}"
 \u7F51\u5173\u5BF9\u4E3B\u52A8\u6D88\u606F\u6709\u9650\u6D41\u3002\u7528\u4E8E\u901A\u77E5(\u4EFB\u52A1\u5B8C\u6210\u3001\u957F\u4EFB\u52A1\u7ED3\u675F),\u4E0D\u8981\u5F53\u804A\u5929\u901A\u9053\u3002
 `;
 }
+function buildTw(s) {
+  return `---
+lang: tw
+rev: ${GUIDE_REV}
+paths: "${pathsKey(s)}"
+---
+
+# \u5FAE\u4FE1\u767C\u9001(Wechatian)
+
+\u672C vault \u88DD\u4E86 Wechatian \u5916\u639B,\u63D0\u4F9B\u4E00\u689D\u4E00\u5C0D\u4E00\u5FAE\u4FE1\u901A\u9053:\u6240\u6709\u8A0A\u606F\u90FD\u767C\u7D66 vault \u4E3B\u4EBA\u81EA\u5DF1\u7D81\u5B9A\u7684\u5FAE\u4FE1\u3002
+
+## \u767C\u9001
+
+\u5F80\u767C\u4EF6\u5323\u76EE\u9304 \`${s.outboxFolder}/\` \u5BEB\u4E00\u500B\u6A94\u6848:
+
+- \`.md\` \u6A94\u6848:\u5167\u5BB9**\u539F\u6A23**\u4F5C\u70BA\u6587\u5B57\u8A0A\u606F\u767C\u9001,**\u652F\u63F4 markdown \u683C\u5F0F**(\u6A19\u984C\u3001\u5217\u8868\u3001\u52A0\u7C97\u3001\u7A0B\u5F0F\u78BC\u5340\u584A),\u5EFA\u8B70\u63A7\u5236\u5728\u624B\u6A5F\u4E00\u5C4F\u5167(\u6A94\u540D\u7121\u8A9E\u7FA9)
+- \u5716\u7247(\`.jpg/.png/.gif/.webp\`)\u3001\u5F71\u7247(\`.mp4\` \u7B49)\u6216\u6587\u4EF6(\`.pdf/.docx/...\`,\u2264100MB):\u4F5C\u70BA\u9644\u4EF6\u767C\u9001
+
+\u5916\u639B\u5728\u4E0B\u4E00\u8F2A\u8F2A\u8A62(\u7D04 30-60 \u79D2)\u6D88\u8CBB\u767C\u4EF6\u5323\u3002\u767C\u9001\u6210\u529F\u6703\u522A\u9664\u6A94\u6848,\u4E26\u628A\u9019\u689D\u8A0A\u606F\u8A18\u9304\u9032 \`${s.inboxFolder}/\` \u4E0B\u7576\u5929\u7684\u5C0D\u8A71\u7B46\u8A18(\u6A19\u8A18"\u767C\u9001";\u5A92\u9AD4\u767C\u9001\u6703\u5728 \`${s.attachmentFolder}/\` \u5B58\u4E00\u4EFD\u526F\u672C\u4E26\u5728\u7B46\u8A18\u88E1\u9023\u7D50)\u3002\u5931\u6557\u6703\u4FDD\u7559\u6A94\u6848(\`.md\` \u672B\u5C3E\u8FFD\u52A0 \`<!-- Wechatian send failed: ... -->\` \u8A3B\u89E3,\u5A92\u9AD4\u6A94\u6848\u7522\u751F \`<\u6A94\u540D>.wechatian-failed.md\` \u8A18\u9304)\u3002\u5BEB\u5165\u5F8C\u7B49\u7D04\u4E00\u5206\u9418,\u6AA2\u67E5\u6A94\u6848\u662F\u5426\u9084\u5728\u4EE5\u5224\u65B7\u7D50\u679C\u3002
+
+## \u63A5\u6536
+
+\u6536\u5230\u7684\u5FAE\u4FE1\u8A0A\u606F\u9644\u52A0\u5230\u540C\u4E00\u4EFD\u6BCF\u65E5\u5C0D\u8A71\u7B46\u8A18 \`${s.inboxFolder}/\`(\u6A19\u8A18"\u63A5\u6536"),\u5A92\u9AD4\u9644\u4EF6\u5132\u5B58\u5728 \`${s.attachmentFolder}/\`\u3002
+
+## \u9650\u5236
+
+\u9598\u9053\u5668\u5C0D\u4E3B\u52D5\u8A0A\u606F\u6709\u9650\u6D41\u3002\u7528\u65BC\u901A\u77E5(\u4EFB\u52D9\u5B8C\u6210\u3001\u9577\u4EFB\u52D9\u7D50\u675F),\u4E0D\u8981\u7576\u804A\u5929\u901A\u9053\u3002
+`;
+}
 async function ensureAgentGuide(app, s, lang) {
   const path = `${s.inboxFolder}/Agent.md`;
-  const target = lang === "zh" ? buildZh(s) : buildEn(s);
+  const target = lang === "zh" ? buildZh(s) : lang === "tw" ? buildTw(s) : buildEn(s);
   try {
     if (await app.vault.adapter.exists(path)) {
       const cur = agentGuideMeta(await app.vault.adapter.read(path));
@@ -1745,7 +1973,8 @@ var DEFAULT_SETTINGS = {
   fetchArticles: true,
   groupArticlesByAccount: true,
   autoImport: true,
-  notifyOnMessage: true
+  notifyOnMessage: true,
+  autoReply: true
 };
 var FOLDER_KEYS = ["inboxFolder", "attachmentFolder", "articleFolder", "outboxFolder"];
 var WechatianSettingTab = class extends import_obsidian4.PluginSettingTab {
@@ -1784,7 +2013,7 @@ var WechatianSettingTab = class extends import_obsidian4.PluginSettingTab {
           type: "dropdown",
           key: "language",
           defaultValue: DEFAULT_SETTINGS.language,
-          options: { system: t("set.language.system"), en: "English", zh: "\u4E2D\u6587" }
+          options: { system: t("set.language.system"), en: "English", zh: "\u4E2D\u6587\uFF08\u7B80\u4F53\uFF09", tw: "\u4E2D\u6587\uFF08\u7E41\u9AD4\uFF09" }
         }
       },
       // Login section: dynamic QR flow, rendered imperatively via the escape hatch
@@ -1831,6 +2060,11 @@ var WechatianSettingTab = class extends import_obsidian4.PluginSettingTab {
       {
         name: t("set.notify"),
         control: { type: "toggle", key: "notifyOnMessage", defaultValue: DEFAULT_SETTINGS.notifyOnMessage }
+      },
+      {
+        name: t("set.autoReply"),
+        desc: t("set.autoReply.desc"),
+        control: { type: "toggle", key: "autoReply", defaultValue: DEFAULT_SETTINGS.autoReply }
       },
       {
         name: "",
@@ -1883,10 +2117,8 @@ var WechatianSettingTab = class extends import_obsidian4.PluginSettingTab {
           b.setDisabled(false);
           if (res.ok) {
             new import_obsidian4.Notice(t("sendTest.ok"));
-          } else if (/context[_ ]?token/i.test(res.errmsg)) {
-            new import_obsidian4.Notice(t("sendTest.needFirstMessage"));
           } else {
-            new import_obsidian4.Notice(t("sendTest.failed", { err: res.errmsg }));
+            new import_obsidian4.Notice(t("sendTest.failed", { err: buildSendFailure(res.errmsg, res.ret) }), 1e4);
           }
         });
       });
@@ -2077,7 +2309,7 @@ var Outbox = class {
     }
     const note = `
 
-<!-- ${t("outbox.failedNote", { ret: res.ret, msg: res.errmsg.trim() || res.raw || "unknown" })} -->
+<!-- Wechatian send failed: ${buildSendFailure(res.errmsg, res.ret, contextToken)} -->
 `;
     await this.app.vault.adapter.write(path, content + note);
     return 0;
@@ -2115,7 +2347,7 @@ var Outbox = class {
     const notePath = `${path}.wechatian-failed.md`;
     const note = `# ${name}
 
-${t("outbox.failedNote", { ret: res.ret, msg: res.errmsg.trim() || res.raw || "unknown" })}
+${buildSendFailure(res.errmsg, res.ret, contextToken)}
 `;
     await this.app.vault.adapter.write(notePath, note);
     return 0;
@@ -2343,9 +2575,10 @@ var WechatianPlugin = class extends import_obsidian6.Plugin {
   async sendTestMessage(text) {
     const st = this.store.get();
     const to = st.scannedUser.trim();
-    if (!to || !st.token.trim()) return { ok: false, errmsg: t("sendTest.notBound") };
+    if (!to || !st.token.trim()) return { ok: false, errmsg: t("sendTest.notBound"), ret: 0, contextToken: "" };
     const client = this.client ?? this.makeClient();
-    const res = await client.sendText(to, text, st.contextTokens[to] ?? "");
+    const contextToken = st.contextTokens[to] ?? "";
+    const res = await client.sendText(to, text, contextToken);
     if (res.ok) {
       const now = Date.now();
       await appendOutbound(this.app, this.settings.inboxFolder, now, to, [
@@ -2354,7 +2587,7 @@ var WechatianPlugin = class extends import_obsidian6.Plugin {
         ...quoteBlock(text)
       ]);
     }
-    return { ok: res.ok, errmsg: res.errmsg.trim() || res.raw || "" };
+    return { ok: res.ok, errmsg: res.errmsg.trim() || res.raw || "", ret: res.ret, contextToken };
   }
   makeClient() {
     const st = this.store.get();
@@ -2451,8 +2684,9 @@ var WechatianPlugin = class extends import_obsidian6.Plugin {
       new import_obsidian6.Notice(`${t("notice.prefix")} \xB7 ${msg.from.split("@")[0]}: ${preview}`);
     }
     if (this.settings.autoImport) {
+      let result = null;
       try {
-        await importMessage(this.app, this.articleTransport, msg, {
+        result = await importMessage(this.app, this.articleTransport, msg, {
           inboxFolder: this.settings.inboxFolder,
           attachmentFolder: this.settings.attachmentFolder,
           articleFolder: this.settings.articleFolder,
@@ -2462,6 +2696,43 @@ var WechatianPlugin = class extends import_obsidian6.Plugin {
       } catch (e) {
         new import_obsidian6.Notice(t("notice.importFailed", { err: String(e?.message ?? e) }));
       }
+      if (this.settings.autoReply) {
+        await this.sendReceiptReply(msg.from, result);
+      }
+    }
+  }
+  /**
+   * Confirmation reply sent right after an inbound message has been recorded:
+   * images/files report their saved path, articles report the note path (or a
+   * fetch failure), plain text confirms the daily note the entry landed in.
+   * Failures here must never break the receive flow.
+   */
+  async sendReceiptReply(from, result) {
+    try {
+      const client = this.client ?? this.makeClient();
+      const contextToken = this.store.get().contextTokens[from] ?? "";
+      const lines = buildReceiptReply(
+        result ? {
+          ok: true,
+          appended: result.appended,
+          dailyNote: result.dailyNote,
+          attachmentPaths: result.attachmentPaths,
+          attachmentFailures: result.attachmentFailures,
+          linkCount: result.linkCount,
+          articleNotes: result.articleNotes
+        } : { ok: false, appended: false, dailyNote: "", attachmentPaths: [], attachmentFailures: [], linkCount: 0, articleNotes: [] }
+      );
+      const res = await client.sendText(from, lines.join("\n"), contextToken);
+      if (res.ok) {
+        await appendOutbound(this.app, this.settings.inboxFolder, Date.now(), from, [
+          `**${timeOfDay(Date.now())}** \xB7 ${t("importer.sent")}`,
+          "",
+          ...quoteBlock(lines.join("\n"))
+        ]);
+      } else if (this.settings.notifyOnMessage) {
+        new import_obsidian6.Notice(t("sendTest.failed", { err: buildSendFailure(res.errmsg, res.ret, contextToken) }), 1e4);
+      }
+    } catch {
     }
   }
   async openTodayInbox() {

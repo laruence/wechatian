@@ -1,11 +1,12 @@
 {
   "name": "wechatian",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "WeChat messaging bridge: send and receive messages, attachments, and articles between WeChat and your vault.",
   "scripts": {
     "build": "node esbuild.config.js",
     "watch": "node esbuild.config.js --watch",
     "lint": "eslint src/",
+    "test": "npm run build && node --test scripts/unit-test.js scripts/unit-ilink.js scripts/unit-article.js",
     "smoke": "node scripts/smoke.js"
   },
   "devDependencies": {
@@ -14,6 +15,7 @@
     "esbuild": "^0.25.0",
     "eslint": "^9.39.5",
     "eslint-plugin-obsidianmd": "^0.4.1",
+    "linkedom": "^0.18.13",
     "obsidian": "^1.8.0",
     "typescript": "^5.9.3"
   }

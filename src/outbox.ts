@@ -5,7 +5,7 @@ import { isVideoExt } from './core/ilink';
 import type { StateStore } from './core/store';
 import type { OutboundAttachment } from './core/types';
 import { appendOutbound, dayStamp, ensureFolder, quoteBlock, sanitizeFileName, timeOfDay } from './core/importer';
-import { t } from './i18n';
+import { buildSendFailure, t } from './i18n';
 
 const IMAGE_EXTS = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp']);
 
@@ -74,9 +74,9 @@ export class Outbox {
       await this.app.vault.adapter.remove(path);
       return 1;
     }
-    // Failure: append the reason at the end of the file; it will be retried next flush
+    // Failure: append a categorized reason + fix hint; the file will be retried next flush
     // (when rate-limited, keeping the file avoids hammering the gateway)
-    const note = `\n\n<!-- ${t('outbox.failedNote', { ret: res.ret, msg: res.errmsg.trim() || res.raw || 'unknown' })} -->\n`;
+    const note = `\n\n<!-- Wechatian send failed: ${buildSendFailure(res.errmsg, res.ret, contextToken)} -->\n`;
     await this.app.vault.adapter.write(path, content + note);
     return 0;
   }
@@ -122,9 +122,9 @@ export class Outbox {
       await this.app.vault.adapter.remove(path);
       return 1;
     }
-    // Failure: record the reason in a sidecar note so it is visible without blocking retries
+    // Failure: record a categorized reason + fix hint in a sidecar note, visible without blocking retries
     const notePath = `${path}.wechatian-failed.md`;
-    const note = `# ${name}\n\n${t('outbox.failedNote', { ret: res.ret, msg: res.errmsg.trim() || res.raw || 'unknown' })}\n`;
+    const note = `# ${name}\n\n${buildSendFailure(res.errmsg, res.ret, contextToken)}\n`;
     await this.app.vault.adapter.write(notePath, note);
     return 0;
   }

@@ -3,7 +3,7 @@ import type { App } from 'obsidian';
 import { TFolder } from 'obsidian';
 import type { InboundMessage } from './types';
 import type { HttpTransport } from './http';
-import { extractLinks, fetchArticle } from './article';
+import { extractLinks, fetchArticle, type HtmlParser } from './article';
 import { t } from '../i18n';
 
 export interface ImportSettings {
@@ -12,11 +12,16 @@ export interface ImportSettings {
   articleFolder: string; // official-account articles
   fetchArticles: boolean;
   groupArticlesByAccount: boolean; // one subfolder per official account under articleFolder
+  parseHtml?: HtmlParser; // injected in tests; the plugin uses the browser DOMParser
 }
 
 export interface ImportResult {
   appended: boolean;
+  dailyNote: string; // path of the daily conversation note the entry was appended to
   articleNotes: string[];
+  attachmentPaths: string[]; // vault paths of successfully saved attachments
+  attachmentFailures: string[]; // names of attachments that failed to save
+  linkCount: number; // links found in the message text (regardless of fetching)
 }
 
 function pad(n: number): string {
@@ -59,7 +64,14 @@ export async function importMessage(
   msg: InboundMessage,
   settings: ImportSettings,
 ): Promise<ImportResult> {
-  const result: ImportResult = { appended: false, articleNotes: [] };
+  const result: ImportResult = {
+    appended: false,
+    dailyNote: '',
+    articleNotes: [],
+    attachmentPaths: [],
+    attachmentFailures: [],
+    linkCount: 0,
+  };
 
   await ensureFolder(app, settings.inboxFolder);
   await ensureFolder(app, settings.attachmentFolder);
@@ -70,10 +82,11 @@ export async function importMessage(
 
   // links -> full article notes first, so the body shows the title link instead of the raw URL
   const links = extractLinks(msg.text);
+  result.linkCount = links.length;
   let display = msg.text.trim();
   if (settings.fetchArticles && links.length) {
     for (const url of links.slice(0, 5)) {
-      const info = await fetchArticle(transport, url);
+      const info = await fetchArticle(transport, url, settings.parseHtml);
       if (!info) continue; // fetch failed: the raw URL stays in the body
       const title = info.title;
       // optional per-account grouping: <articleFolder>/<account>/; article images always stay
@@ -139,14 +152,17 @@ export async function importMessage(
       // writeBinary needs an ArrayBuffer; slice out the exact region from the Uint8Array view
       const ab = att.data.buffer.slice(att.data.byteOffset, att.data.byteOffset + att.data.byteLength) as ArrayBuffer;
       await app.vault.adapter.writeBinary(path, ab);
+      result.attachmentPaths.push(path);
       const embed = att.kind === 'image' ? `![[${path}]]` : `[[${path}|${att.name}]]`;
       lines.push('', ...quoteBlock(embed));
     } catch {
+      result.attachmentFailures.push(att.name);
       lines.push('', ...quoteBlock(t('importer.attachFailed', { name: att.name })));
     }
   }
 
   // append to today's conversation note (sender goes in frontmatter so agents can look up the recipient ID)
+  result.dailyNote = `${settings.inboxFolder}/${dayStamp(msg.timeMs)}.md`;
   result.appended = await appendDaily(app, settings.inboxFolder, msg.timeMs, msg.from, lines);
   return result;
 }

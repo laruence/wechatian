@@ -4,10 +4,10 @@ import { Notice, PluginSettingTab, Setting, type SettingDefinitionItem, type Tex
 import type WechatianPlugin from './main';
 import { loginLoop } from './core/qrlogin';
 import { encodeQr } from './core/qrcode';
-import { t } from './i18n';
+import { buildSendFailure, t } from './i18n';
 
 export interface WechatianSettings {
-  language: 'system' | 'en' | 'zh'; // UI language; system follows Obsidian
+  language: 'system' | 'en' | 'zh' | 'tw'; // UI language; system follows Obsidian
   enabled: boolean; // auto-connect on startup
   inboxFolder: string;
   attachmentFolder: string;
@@ -17,6 +17,7 @@ export interface WechatianSettings {
   groupArticlesByAccount: boolean; // one subfolder per official account under the article folder
   autoImport: boolean;
   notifyOnMessage: boolean;
+  autoReply: boolean; // after recording an inbound message, send a confirmation reply back
 }
 
 export const DEFAULT_SETTINGS: WechatianSettings = {
@@ -30,6 +31,7 @@ export const DEFAULT_SETTINGS: WechatianSettings = {
   groupArticlesByAccount: true,
   autoImport: true,
   notifyOnMessage: true,
+  autoReply: true,
 };
 
 const FOLDER_KEYS = ['inboxFolder', 'attachmentFolder', 'articleFolder', 'outboxFolder'];
@@ -77,7 +79,7 @@ export class WechatianSettingTab extends PluginSettingTab {
           type: 'dropdown',
           key: 'language',
           defaultValue: DEFAULT_SETTINGS.language,
-          options: { system: t('set.language.system'), en: 'English', zh: '中文' },
+          options: { system: t('set.language.system'), en: 'English', zh: '中文（简体）', tw: '中文（繁體）' },
         },
       },
       // Login section: dynamic QR flow, rendered imperatively via the escape hatch
@@ -124,6 +126,11 @@ export class WechatianSettingTab extends PluginSettingTab {
       {
         name: t('set.notify'),
         control: { type: 'toggle', key: 'notifyOnMessage', defaultValue: DEFAULT_SETTINGS.notifyOnMessage },
+      },
+      {
+        name: t('set.autoReply'),
+        desc: t('set.autoReply.desc'),
+        control: { type: 'toggle', key: 'autoReply', defaultValue: DEFAULT_SETTINGS.autoReply },
       },
       {
         name: '',
@@ -191,10 +198,9 @@ export class WechatianSettingTab extends PluginSettingTab {
             b.setDisabled(false);
             if (res.ok) {
               new Notice(t('sendTest.ok'));
-            } else if (/context[_ ]?token/i.test(res.errmsg)) {
-              new Notice(t('sendTest.needFirstMessage'));
             } else {
-              new Notice(t('sendTest.failed', { err: res.errmsg }));
+              // categorized reason + fix hint instead of a bare error string
+              new Notice(t('sendTest.failed', { err: buildSendFailure(res.errmsg, res.ret) }), 10000);
             }
           });
         });

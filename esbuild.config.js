@@ -40,6 +40,29 @@ async function build() {
     });
   }
 
+  // 单元测试入口(node:test,跑 node --test scripts/unit-*.js)。
+  // 'obsidian' 别名到空 shim:bundle 里残留的值引用(如 i18n 的语言探测)在 node 下容忍空导出
+  const testBundles = [
+    ['tests/unit.ts', 'scripts/unit-test.js'],
+    ['tests/unit-ilink.ts', 'scripts/unit-ilink.js'],
+    ['tests/unit-article.ts', 'scripts/unit-article.js'],
+  ];
+  for (const [entry, outfile] of testBundles) {
+    if (fs.existsSync(entry)) {
+      await esbuild.build({
+        entryPoints: [entry],
+        bundle: true,
+        external: ['crypto'],
+        alias: { obsidian: path.resolve(__dirname, 'tests/obsidian-shim.js') },
+        format: 'cjs',
+        target: 'es2022',
+        platform: 'node',
+        outfile,
+        logLevel: 'info',
+      });
+    }
+  }
+
   // 分发到 vault 的插件目录(可用 OBSIDIAN_PLUGIN_DIR 覆盖)
   const dest =
     process.env.OBSIDIAN_PLUGIN_DIR ??

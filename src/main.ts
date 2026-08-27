@@ -5,14 +5,14 @@ import type { InboundMessage } from './core/types';
 import { ObsidianTransport } from './core/transport-obsidian';
 import { NodeTransport } from './core/transport-node';
 import { StateStore, type BotState } from './core/store';
-import { appendOutbound, ensureFolder, importMessage, quoteBlock, timeOfDay } from './core/importer';
+import { appendOutbound, ensureFolder, importMessage, quoteBlock, timeOfDay, type ImportResult } from './core/importer';
 import { ensureAgentGuide } from './core/agent-guide';
 import type { LoginOutcome } from './core/qrlogin';
 import { DEFAULT_SETTINGS, WechatianSettings, WechatianSettingTab } from './settings';
 import { QrLoginModal } from './qr-modal';
 import { Outbox } from './outbox';
 import { CDN_BASE, ILINK_DEFAULT_BASE } from './core/constants';
-import { applyLanguage, resolvedLanguage, t, type UiLanguage } from './i18n';
+import { applyLanguage, buildReceiptReply, buildSendFailure, resolvedLanguage, t, type UiLanguage } from './i18n';
 
 /** Pre-0.1.4 location; kept so an existing binding survives the move (the old
  * path lived in the vault root and was never auto-created, so writes silently
@@ -246,12 +246,13 @@ export default class WechatianPlugin extends Plugin {
   }
 
   /** Send a test message to the bound account (one-to-one; used by the settings page) */
-  async sendTestMessage(text: string): Promise<{ ok: boolean; errmsg: string }> {
+  async sendTestMessage(text: string): Promise<{ ok: boolean; errmsg: string; ret: number; contextToken: string }> {
     const st = this.store.get();
     const to = st.scannedUser.trim();
-    if (!to || !st.token.trim()) return { ok: false, errmsg: t('sendTest.notBound') };
+    if (!to || !st.token.trim()) return { ok: false, errmsg: t('sendTest.notBound'), ret: 0, contextToken: '' };
     const client = this.client ?? this.makeClient();
-    const res = await client.sendText(to, text, st.contextTokens[to] ?? '');
+    const contextToken = st.contextTokens[to] ?? '';
+    const res = await client.sendText(to, text, contextToken);
     if (res.ok) {
       const now = Date.now();
       await appendOutbound(this.app, this.settings.inboxFolder, now, to, [
@@ -260,7 +261,7 @@ export default class WechatianPlugin extends Plugin {
         ...quoteBlock(text),
       ]);
     }
-    return { ok: res.ok, errmsg: res.errmsg.trim() || res.raw || '' };
+    return { ok: res.ok, errmsg: res.errmsg.trim() || res.raw || '', ret: res.ret, contextToken };
   }
 
   private makeClient(): IlinkClient {
@@ -381,8 +382,9 @@ export default class WechatianPlugin extends Plugin {
     }
 
     if (this.settings.autoImport) {
+      let result: ImportResult | null = null;
       try {
-        await importMessage(this.app, this.articleTransport, msg, {
+        result = await importMessage(this.app, this.articleTransport, msg, {
           inboxFolder: this.settings.inboxFolder,
           attachmentFolder: this.settings.attachmentFolder,
           articleFolder: this.settings.articleFolder,
@@ -392,6 +394,49 @@ export default class WechatianPlugin extends Plugin {
       } catch (e) {
         new Notice(t('notice.importFailed', { err: String((e as Error)?.message ?? e) }));
       }
+      if (this.settings.autoReply) {
+        await this.sendReceiptReply(msg.from, result);
+      }
+    }
+  }
+
+  /**
+   * Confirmation reply sent right after an inbound message has been recorded:
+   * images/files report their saved path, articles report the note path (or a
+   * fetch failure), plain text confirms the daily note the entry landed in.
+   * Failures here must never break the receive flow.
+   */
+  private async sendReceiptReply(from: string, result: ImportResult | null): Promise<void> {
+    try {
+      const client = this.client ?? this.makeClient();
+      const contextToken = this.store.get().contextTokens[from] ?? '';
+      const lines = buildReceiptReply(
+        result
+          ? {
+              ok: true,
+              appended: result.appended,
+              dailyNote: result.dailyNote,
+              attachmentPaths: result.attachmentPaths,
+              attachmentFailures: result.attachmentFailures,
+              linkCount: result.linkCount,
+              articleNotes: result.articleNotes,
+            }
+          : { ok: false, appended: false, dailyNote: '', attachmentPaths: [], attachmentFailures: [], linkCount: 0, articleNotes: [] },
+      );
+
+      const res = await client.sendText(from, lines.join('\n'), contextToken);
+      if (res.ok) {
+        await appendOutbound(this.app, this.settings.inboxFolder, Date.now(), from, [
+          `**${timeOfDay(Date.now())}** · ${t('importer.sent')}`,
+          '',
+          ...quoteBlock(lines.join('\n')),
+        ]);
+      } else if (this.settings.notifyOnMessage) {
+        // surface a categorized reason + fix hint, not a silent failure
+        new Notice(t('sendTest.failed', { err: buildSendFailure(res.errmsg, res.ret, contextToken) }), 10000);
+      }
+    } catch {
+      /* receipt replies are best-effort: a failure must not disturb receiving */
     }
   }
 

@@ -23,6 +23,9 @@ export interface ArticleInfo {
   images: ArticleImage[];
 }
 
+/** Injectable HTML parser: the plugin uses the browser DOMParser; tests inject linkedom */
+export type HtmlParser = (html: string) => Document;
+
 /** Extract links from message text */
 export function extractLinks(text: string): string[] {
   const out: string[] = [];
@@ -39,7 +42,7 @@ export function extractLinks(text: string): string[] {
  * the body in #js_content and lazy-load images via data-src; generic pages fall
  * back to <body>. Returns null on failure; the caller keeps a plain link entry.
  */
-export async function fetchArticle(transport: HttpTransport, url: string): Promise<ArticleInfo | null> {
+export async function fetchArticle(transport: HttpTransport, url: string, parseHtml?: HtmlParser): Promise<ArticleInfo | null> {
   try {
     const resp = await transport.get(
       url,
@@ -53,7 +56,8 @@ export async function fetchArticle(transport: HttpTransport, url: string): Promi
     );
     if (resp.status !== 200) return null;
     const html = await bodyTextAuto(resp);
-    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const parse = parseHtml ?? ((h: string) => new DOMParser().parseFromString(h, 'text/html'));
+    const doc = parse(html);
 
     const title = doc.querySelector('meta[property="og:title"]')?.getAttribute('content') ?? doc.title ?? '';
     if (!title.trim()) return null;

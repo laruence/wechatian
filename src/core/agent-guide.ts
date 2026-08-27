@@ -79,14 +79,44 @@ paths: "${pathsKey(s)}"
 `;
 }
 
+function buildTw(s: WechatianSettings): string {
+  return `---
+lang: tw
+rev: ${GUIDE_REV}
+paths: "${pathsKey(s)}"
+---
+
+# 微信發送(Wechatian)
+
+本 vault 裝了 Wechatian 外掛,提供一條一對一微信通道:所有訊息都發給 vault 主人自己綁定的微信。
+
+## 發送
+
+往發件匣目錄 \`${s.outboxFolder}/\` 寫一個檔案:
+
+- \`.md\` 檔案:內容**原樣**作為文字訊息發送,**支援 markdown 格式**(標題、列表、加粗、程式碼區塊),建議控制在手機一屏內(檔名無語義)
+- 圖片(\`.jpg/.png/.gif/.webp\`)、影片(\`.mp4\` 等)或文件(\`.pdf/.docx/...\`,≤100MB):作為附件發送
+
+外掛在下一輪輪詢(約 30-60 秒)消費發件匣。發送成功會刪除檔案,並把這條訊息記錄進 \`${s.inboxFolder}/\` 下當天的對話筆記(標記"發送";媒體發送會在 \`${s.attachmentFolder}/\` 存一份副本並在筆記裡連結)。失敗會保留檔案(\`.md\` 末尾追加 \`<!-- Wechatian send failed: ... -->\` 註解,媒體檔案產生 \`<檔名>.wechatian-failed.md\` 記錄)。寫入後等約一分鐘,檢查檔案是否還在以判斷結果。
+
+## 接收
+
+收到的微信訊息附加到同一份每日對話筆記 \`${s.inboxFolder}/\`(標記"接收"),媒體附件儲存在 \`${s.attachmentFolder}/\`。
+
+## 限制
+
+閘道器對主動訊息有限流。用於通知(任務完成、長任務結束),不要當聊天通道。
+`;
+}
+
 /**
  * (Re)generate <inbox>/Agent.md. Rewrites whenever the UI language or any of the
  * directory settings changed since the file was generated; user edits made while
  * both stay the same are preserved.
  */
-export async function ensureAgentGuide(app: App, s: WechatianSettings, lang: 'en' | 'zh'): Promise<void> {
+export async function ensureAgentGuide(app: App, s: WechatianSettings, lang: 'en' | 'zh' | 'tw'): Promise<void> {
   const path = `${s.inboxFolder}/Agent.md`;
-  const target = lang === 'zh' ? buildZh(s) : buildEn(s);
+  const target = lang === 'zh' ? buildZh(s) : lang === 'tw' ? buildTw(s) : buildEn(s);
   try {
     if (await app.vault.adapter.exists(path)) {
       const cur = agentGuideMeta(await app.vault.adapter.read(path));
