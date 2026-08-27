@@ -94,11 +94,11 @@ const en: Dict = {
   'sendTest.notBound': 'Not logged in yet',
   'sendTest.needFirstMessage': 'No send credential yet — send any message to the bot from WeChat first, then retry',
 
-  'reply.received': 'Received ✅',
-  'reply.recorded': 'Received ✅ — recorded to {{path}}',
-  'reply.image': 'Image received ✅ — saved to {{path}}',
-  'reply.file': 'File received ✅ — saved to {{path}}',
-  'reply.article': 'Article saved ✅ — {{path}}',
+  'reply.received': '**Received**',
+  'reply.recorded': '**Received**',
+  'reply.image': '**Image received**',
+  'reply.file': '**File received**',
+  'reply.article': '**Article saved**',
   'reply.articleFailed': 'Link received, but fetching the article failed.',
   'reply.attachFailed': 'Failed to save attachment: {{name}}',
   'reply.recordFailed': 'Message received, but recording it to the vault failed.',
@@ -207,11 +207,11 @@ const zh: Dict = {
   'sendTest.notBound': '尚未登录',
   'sendTest.needFirstMessage': '还没有发送凭据——请先从微信给机器人发一条消息,再重试',
 
-  'reply.received': '收到 ✅',
-  'reply.recorded': '收到,已记录到 {{path}} ✅',
-  'reply.image': '已收到图片 ✅,保存到 {{path}}',
-  'reply.file': '已收到文件 ✅,保存到 {{path}}',
-  'reply.article': '文章已保存 ✅ {{path}}',
+  'reply.received': '**收到**',
+  'reply.recorded': '**收到**',
+  'reply.image': '**已收到图片**',
+  'reply.file': '**已收到文件**',
+  'reply.article': '**文章已保存**',
   'reply.articleFailed': '收到链接,但文章抓取失败。',
   'reply.attachFailed': '附件保存失败: {{name}}',
   'reply.recordFailed': '消息已收到,但写入 vault 失败。',
@@ -320,11 +320,11 @@ const tw: Dict = {
   'sendTest.notBound': '尚未登入',
   'sendTest.needFirstMessage': '還沒有發送憑證——請先從微信給機器人發一條訊息,再重試',
 
-  'reply.received': '收到 ✅',
-  'reply.recorded': '收到,已記錄到 {{path}} ✅',
-  'reply.image': '已收到圖片 ✅,儲存到 {{path}}',
-  'reply.file': '已收到檔案 ✅,儲存到 {{path}}',
-  'reply.article': '文章已儲存 ✅ {{path}}',
+  'reply.received': '**收到**',
+  'reply.recorded': '**收到**',
+  'reply.image': '**已收到圖片**',
+  'reply.file': '**已收到檔案**',
+  'reply.article': '**文章已儲存**',
   'reply.articleFailed': '收到連結,但文章抓取失敗。',
   'reply.attachFailed': '附件儲存失敗: {{name}}',
   'reply.recordFailed': '訊息已收到,但寫入 vault 失敗。',
@@ -428,26 +428,29 @@ export interface ReceiptReplyInput {
  */
 export function buildReceiptReply(r: ReceiptReplyInput): string[] {
   if (!r.ok) return [t('reply.recordFailed')];
+  // saved paths ride on their own line, small and subdued
+  const small = (s: string) => `<small>${s}</small>`;
   const lines: string[] = [];
   if (r.attachmentPaths.length) {
     const first = r.attachmentPaths[0];
     const key = /\.(jpe?g|png|gif|webp|bmp)$/i.test(first) ? 'reply.image' : 'reply.file';
-    lines.push(t(key, { path: first }));
+    lines.push(t(key), small(first));
     for (const extra of r.attachmentPaths.slice(1)) {
-      lines.push(`· ${extra}`);
+      lines.push(small(extra));
     }
   }
   if (r.attachmentFailures.length) {
     lines.push(t('reply.attachFailed', { name: r.attachmentFailures.join(', ') }));
   }
   for (const note of r.articleNotes) {
-    lines.push(t('reply.article', { path: note }));
+    lines.push(t('reply.article'), small(note));
   }
   if (!r.attachmentPaths.length && !r.attachmentFailures.length && r.linkCount && !r.articleNotes.length) {
     lines.push(t('reply.articleFailed'));
   }
   if (!lines.length) {
-    lines.push(r.appended && r.dailyNote ? t('reply.recorded', { path: r.dailyNote }) : t('reply.received'));
+    lines.push(t('reply.received'));
+    if (r.appended && r.dailyNote) lines.push(small(r.dailyNote));
   }
   return lines;
 }

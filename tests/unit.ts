@@ -212,15 +212,14 @@ test('dictionaries: en/zh/tw key parity', () => {
 test('applyLanguage / resolvedLanguage / t', () => {
   applyLanguage('en');
   assert.equal(resolvedLanguage(), 'en');
-  assert.equal(t('reply.received'), 'Received ✅');
+  assert.equal(t('reply.received'), '**Received**');
   applyLanguage('zh');
   assert.equal(resolvedLanguage(), 'zh');
-  assert.equal(t('reply.received'), '收到 ✅');
+  assert.equal(t('reply.received'), '**收到**');
   applyLanguage('tw');
   assert.equal(resolvedLanguage(), 'tw');
   assert.equal(t('set.autoReply'), '總是回覆');
-  // variable substitution
-  assert.equal(t('reply.recorded', { path: 'Wechatian/2026-08-27.md' }), '收到,已記錄到 Wechatian/2026-08-27.md ✅');
+  assert.equal(t('reply.recorded'), '**收到**');
   applyLanguage('en');
 });
 
@@ -230,12 +229,12 @@ const RECEIPT_OK = { ok: true, appended: true, dailyNote: 'Wechatian/2026-08-27.
 
 test('buildReceiptReply: plain text records the daily note path', () => {
   applyLanguage('zh');
-  assert.deepEqual(buildReceiptReply(RECEIPT_OK), ['收到,已记录到 Wechatian/2026-08-27.md ✅']);
+  assert.deepEqual(buildReceiptReply(RECEIPT_OK), ['**收到**', '<small>Wechatian/2026-08-27.md</small>']);
 });
 
 test('buildReceiptReply: append failure falls back to plain received', () => {
   applyLanguage('zh');
-  assert.deepEqual(buildReceiptReply({ ...RECEIPT_OK, appended: false }), ['收到 ✅']);
+  assert.deepEqual(buildReceiptReply({ ...RECEIPT_OK, appended: false }), ['**收到**']);
 });
 
 test('buildReceiptReply: import failure', () => {
@@ -250,22 +249,24 @@ test('buildReceiptReply: images + extra paths', () => {
     ...RECEIPT_OK,
     attachmentPaths: ['Wechatian/attachments/a.jpg', 'Wechatian/attachments/b.png'],
   });
-  assert.equal(lines.length, 2);
-  assert.ok(lines[0].includes('a.jpg'));
-  assert.equal(lines[1], '· Wechatian/attachments/b.png');
+  assert.equal(lines.length, 3);
+  assert.equal(lines[0], '**已收到图片**');
+  assert.equal(lines[1], '<small>Wechatian/attachments/a.jpg</small>');
+  assert.equal(lines[2], '<small>Wechatian/attachments/b.png</small>');
 });
 
 test('buildReceiptReply: non-image attachments use the file wording', () => {
   applyLanguage('zh');
   const lines = buildReceiptReply({ ...RECEIPT_OK, attachmentPaths: ['Wechatian/attachments/doc.pdf'] });
-  assert.ok(lines[0].includes('已收到文件'));
-  assert.ok(lines[0].includes('doc.pdf'));
+  assert.equal(lines[0], '**已收到文件**');
+  assert.ok(lines[1].includes('doc.pdf'));
 });
 
 test('buildReceiptReply: article saved vs fetch failed', () => {
   applyLanguage('zh');
   const saved = buildReceiptReply({ ...RECEIPT_OK, articleNotes: ['Wechatian/articles/2026-08-27 Foo.md'], linkCount: 1 });
-  assert.ok(saved[0].includes('Wechatian/articles/2026-08-27 Foo.md'));
+  assert.equal(saved[0], '**文章已保存**');
+  assert.equal(saved[1], '<small>Wechatian/articles/2026-08-27 Foo.md</small>');
   const failed = buildReceiptReply({ ...RECEIPT_OK, linkCount: 2 });
   assert.deepEqual(failed, ['收到链接,但文章抓取失败。']);
 });
@@ -276,7 +277,7 @@ test('buildReceiptReply follows the active language', () => {
   assert.ok(lines[0].includes('已收到圖片'));
   applyLanguage('en');
   const enLines = buildReceiptReply(RECEIPT_OK);
-  assert.ok(enLines[0].startsWith('Received'));
+  assert.ok(enLines[0].startsWith('**Received'));
 });
 
 /* ------------------------------------------------------- failure classify */

@@ -944,11 +944,11 @@ var en = {
   "sendTest.failed": "Send failed: {{err}}",
   "sendTest.notBound": "Not logged in yet",
   "sendTest.needFirstMessage": "No send credential yet \u2014 send any message to the bot from WeChat first, then retry",
-  "reply.received": "Received \u2705",
-  "reply.recorded": "Received \u2705 \u2014 recorded to {{path}}",
-  "reply.image": "Image received \u2705 \u2014 saved to {{path}}",
-  "reply.file": "File received \u2705 \u2014 saved to {{path}}",
-  "reply.article": "Article saved \u2705 \u2014 {{path}}",
+  "reply.received": "**Received**",
+  "reply.recorded": "**Received**",
+  "reply.image": "**Image received**",
+  "reply.file": "**File received**",
+  "reply.article": "**Article saved**",
   "reply.articleFailed": "Link received, but fetching the article failed.",
   "reply.attachFailed": "Failed to save attachment: {{name}}",
   "reply.recordFailed": "Message received, but recording it to the vault failed.",
@@ -1044,11 +1044,11 @@ var zh = {
   "sendTest.failed": "\u53D1\u9001\u5931\u8D25: {{err}}",
   "sendTest.notBound": "\u5C1A\u672A\u767B\u5F55",
   "sendTest.needFirstMessage": "\u8FD8\u6CA1\u6709\u53D1\u9001\u51ED\u636E\u2014\u2014\u8BF7\u5148\u4ECE\u5FAE\u4FE1\u7ED9\u673A\u5668\u4EBA\u53D1\u4E00\u6761\u6D88\u606F,\u518D\u91CD\u8BD5",
-  "reply.received": "\u6536\u5230 \u2705",
-  "reply.recorded": "\u6536\u5230,\u5DF2\u8BB0\u5F55\u5230 {{path}} \u2705",
-  "reply.image": "\u5DF2\u6536\u5230\u56FE\u7247 \u2705,\u4FDD\u5B58\u5230 {{path}}",
-  "reply.file": "\u5DF2\u6536\u5230\u6587\u4EF6 \u2705,\u4FDD\u5B58\u5230 {{path}}",
-  "reply.article": "\u6587\u7AE0\u5DF2\u4FDD\u5B58 \u2705 {{path}}",
+  "reply.received": "**\u6536\u5230**",
+  "reply.recorded": "**\u6536\u5230**",
+  "reply.image": "**\u5DF2\u6536\u5230\u56FE\u7247**",
+  "reply.file": "**\u5DF2\u6536\u5230\u6587\u4EF6**",
+  "reply.article": "**\u6587\u7AE0\u5DF2\u4FDD\u5B58**",
   "reply.articleFailed": "\u6536\u5230\u94FE\u63A5,\u4F46\u6587\u7AE0\u6293\u53D6\u5931\u8D25\u3002",
   "reply.attachFailed": "\u9644\u4EF6\u4FDD\u5B58\u5931\u8D25: {{name}}",
   "reply.recordFailed": "\u6D88\u606F\u5DF2\u6536\u5230,\u4F46\u5199\u5165 vault \u5931\u8D25\u3002",
@@ -1144,11 +1144,11 @@ var tw = {
   "sendTest.failed": "\u767C\u9001\u5931\u6557: {{err}}",
   "sendTest.notBound": "\u5C1A\u672A\u767B\u5165",
   "sendTest.needFirstMessage": "\u9084\u6C92\u6709\u767C\u9001\u6191\u8B49\u2014\u2014\u8ACB\u5148\u5F9E\u5FAE\u4FE1\u7D66\u6A5F\u5668\u4EBA\u767C\u4E00\u689D\u8A0A\u606F,\u518D\u91CD\u8A66",
-  "reply.received": "\u6536\u5230 \u2705",
-  "reply.recorded": "\u6536\u5230,\u5DF2\u8A18\u9304\u5230 {{path}} \u2705",
-  "reply.image": "\u5DF2\u6536\u5230\u5716\u7247 \u2705,\u5132\u5B58\u5230 {{path}}",
-  "reply.file": "\u5DF2\u6536\u5230\u6A94\u6848 \u2705,\u5132\u5B58\u5230 {{path}}",
-  "reply.article": "\u6587\u7AE0\u5DF2\u5132\u5B58 \u2705 {{path}}",
+  "reply.received": "**\u6536\u5230**",
+  "reply.recorded": "**\u6536\u5230**",
+  "reply.image": "**\u5DF2\u6536\u5230\u5716\u7247**",
+  "reply.file": "**\u5DF2\u6536\u5230\u6A94\u6848**",
+  "reply.article": "**\u6587\u7AE0\u5DF2\u5132\u5B58**",
   "reply.articleFailed": "\u6536\u5230\u9023\u7D50,\u4F46\u6587\u7AE0\u6293\u53D6\u5931\u6557\u3002",
   "reply.attachFailed": "\u9644\u4EF6\u5132\u5B58\u5931\u6557: {{name}}",
   "reply.recordFailed": "\u8A0A\u606F\u5DF2\u6536\u5230,\u4F46\u5BEB\u5165 vault \u5931\u6557\u3002",
@@ -1212,26 +1212,28 @@ function buildSendFailure(errmsg, ret, contextToken = "") {
 }
 function buildReceiptReply(r) {
   if (!r.ok) return [t("reply.recordFailed")];
+  const small = (s) => `<small>${s}</small>`;
   const lines = [];
   if (r.attachmentPaths.length) {
     const first = r.attachmentPaths[0];
     const key = /\.(jpe?g|png|gif|webp|bmp)$/i.test(first) ? "reply.image" : "reply.file";
-    lines.push(t(key, { path: first }));
+    lines.push(t(key), small(first));
     for (const extra of r.attachmentPaths.slice(1)) {
-      lines.push(`\xB7 ${extra}`);
+      lines.push(small(extra));
     }
   }
   if (r.attachmentFailures.length) {
     lines.push(t("reply.attachFailed", { name: r.attachmentFailures.join(", ") }));
   }
   for (const note of r.articleNotes) {
-    lines.push(t("reply.article", { path: note }));
+    lines.push(t("reply.article"), small(note));
   }
   if (!r.attachmentPaths.length && !r.attachmentFailures.length && r.linkCount && !r.articleNotes.length) {
     lines.push(t("reply.articleFailed"));
   }
   if (!lines.length) {
-    lines.push(r.appended && r.dailyNote ? t("reply.recorded", { path: r.dailyNote }) : t("reply.received"));
+    lines.push(t("reply.received"));
+    if (r.appended && r.dailyNote) lines.push(small(r.dailyNote));
   }
   return lines;
 }
