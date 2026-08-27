@@ -68,10 +68,21 @@ test('fetchArticle: generic page without og tags uses <title> and body', async (
   assert.ok(info!.markdown.includes('only body text'));
 });
 
-test('fetchArticle: no title at all -> null (raw link stays in the note)', async () => {
+test('fetchArticle: no title at all -> rejects (raw link stays in the note)', async () => {
   const page = '<html><body><p>anonymous</p></body></html>';
-  const info = await fetchArticle(articleTransport(page), 'https://example.com/x', parseHtml);
-  assert.equal(info, null);
+  await assert.rejects(fetchArticle(articleTransport(page), 'https://example.com/x', parseHtml), /no title/);
+});
+
+test('fetchArticle: non-200 response rejects with the status as the reason', async () => {
+  const failing: HttpTransport = {
+    async get(): Promise<HttpResponse> {
+      return { status: 503, body: new ArrayBuffer(0), headers: lowerHeaders({}) };
+    },
+    async post(): Promise<HttpResponse> {
+      throw new Error('not used');
+    },
+  };
+  await assert.rejects(fetchArticle(failing, 'https://example.com/x', parseHtml), /http 503/);
 });
 
 test('fetchArticle: image download failure keeps the placeholder with null data', async () => {

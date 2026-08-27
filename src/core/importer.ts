@@ -20,8 +20,10 @@ export interface ImportResult {
   dailyNote: string; // path of the daily conversation note the entry was appended to
   articleAssets: ArticleAsset[]; // saved article notes with the directory holding their images
   attachmentPaths: string[]; // vault paths of successfully saved attachments
-  attachmentFailures: string[]; // names of attachments that failed to save
+  /** failed attachments as "name (reason)" — CDN download failures and vault write failures alike */
+  attachmentFailures: string[];
   linkCount: number; // links found in the message text (regardless of fetching)
+  articleFailures: string[]; // short reasons for links whose article note could not be created
 }
 
 function pad(n: number): string {
@@ -69,8 +71,9 @@ export async function importMessage(
     dailyNote: '',
     articleAssets: [],
     attachmentPaths: [],
-    attachmentFailures: [],
+    attachmentFailures: msg.attachmentFailures.map((f) => `${f.name} (${f.reason})`),
     linkCount: 0,
+    articleFailures: [],
   };
 
   await ensureFolder(app, settings.inboxFolder);
@@ -86,16 +89,15 @@ export async function importMessage(
   let display = msg.text.trim();
   if (settings.fetchArticles && links.length) {
     for (const url of links.slice(0, 5)) {
-      const info = await fetchArticle(transport, url, settings.parseHtml);
-      if (!info) continue; // fetch failed: the raw URL stays in the body
-      const title = info.title;
-      // optional per-account grouping: <articleFolder>/<account>/; article images always stay
-      // inside the article tree in an assets subdir (chat attachments use attachmentFolder)
-      const accountDir =
-        settings.groupArticlesByAccount && info.account ? `/${sanitizeFileName(info.account)}` : '';
-      const notePath = `${settings.articleFolder}${accountDir}/${dayStamp(msg.timeMs)} ${sanitizeFileName(title)}.md`;
-      const mediaFolder = `${settings.articleFolder}${accountDir}/assets`;
       try {
+        const info = await fetchArticle(transport, url, settings.parseHtml);
+        const title = info.title;
+        // optional per-account grouping: <articleFolder>/<account>/; article images always stay
+        // inside the article tree in an assets subdir (chat attachments use attachmentFolder)
+        const accountDir =
+          settings.groupArticlesByAccount && info.account ? `/${sanitizeFileName(info.account)}` : '';
+        const notePath = `${settings.articleFolder}${accountDir}/${dayStamp(msg.timeMs)} ${sanitizeFileName(title)}.md`;
+        const mediaFolder = `${settings.articleFolder}${accountDir}/assets`;
         if (!(await app.vault.adapter.exists(notePath))) {
           await ensureFolder(app, mediaFolder);
           // store downloaded images next to the other media, then resolve placeholders
@@ -137,8 +139,10 @@ export async function importMessage(
           result.articleAssets.push({ title, note: notePath, assetsDir: mediaFolder, assetCount: savedAssets });
         }
         display = display.split(url).join(`[[${notePath.replace(/\.md$/, '')}|${title}]]`);
-      } catch {
-        /* a failed article note must not break the inbox entry */
+      } catch (e) {
+        // a failed article note must not break the inbox entry, but the user
+        // should learn why (e.g. http 503, no title on the page)
+        result.articleFailures.push(String((e as Error)?.message ?? e));
       }
     }
   }
@@ -157,8 +161,8 @@ export async function importMessage(
       result.attachmentPaths.push(path);
       const embed = att.kind === 'image' ? `![[${path}]]` : `[[${path}|${att.name}]]`;
       lines.push('', ...quoteBlock(embed));
-    } catch {
-      result.attachmentFailures.push(att.name);
+    } catch (e) {
+      result.attachmentFailures.push(`${att.name} (${String((e as Error)?.message ?? e)})`);
       lines.push('', ...quoteBlock(t('importer.attachFailed', { name: att.name })));
     }
   }

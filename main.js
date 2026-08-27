@@ -183,22 +183,24 @@ var IlinkClient = class {
     if (!from) return null;
     const items = m.item_list ?? [];
     const text = extractText(items);
-    const attachments = await this.collectMedia(items);
-    if (!text.trim() && attachments.length === 0) return null;
+    const { attachments, failures: attachmentFailures } = await this.collectMedia(items);
+    if (!text.trim() && attachments.length === 0 && attachmentFailures.length === 0) return null;
     return {
       from,
       messageId: m.message_id ? String(m.message_id) : `${m.create_time_ms ?? Date.now()}`,
       timeMs: m.create_time_ms ?? Date.now(),
       text,
       attachments,
+      attachmentFailures,
       raw: m
     };
   }
-  /** Download and decrypt media in the message; a single failure is skipped without affecting text */
+  /** Download and decrypt media in the message; failures are recorded with a reason, text still comes through */
   async collectMedia(items) {
-    const out = [];
+    const attachments = [];
+    const failures = [];
     const cdnBase = this.opts.cdnBase.replace(/\/$/, "");
-    if (!cdnBase) return out;
+    if (!cdnBase) return { attachments, failures };
     const tasks = [];
     const grab = (media, aesKeyB64, kind, name, mime) => {
       const enc = (media?.encrypt_query_param ?? "").trim();
@@ -207,10 +209,16 @@ var IlinkClient = class {
       const url = downloadUrl(cdnBase, enc);
       tasks.push(
         this.transport.get(url, {}, 6e4).then((r) => {
+          if (r.status !== 200) {
+            failures.push({ kind, name, reason: `http ${r.status}` });
+            return;
+          }
           let buf = Buffer.from(r.body);
           if (key) buf = decryptEcb(buf, key);
-          out.push({ kind, name, mime, data: new Uint8Array(buf) });
-        }).catch(() => void 0)
+          attachments.push({ kind, name, mime, data: new Uint8Array(buf) });
+        }).catch((e) => {
+          failures.push({ kind, name, reason: String(e?.message ?? e) });
+        })
       );
     };
     for (const it of items) {
@@ -223,7 +231,7 @@ var IlinkClient = class {
             const raw = Buffer.from(img.aeskey, "hex");
             if (raw.length === 16) keyB64 = raw.toString("base64");
           }
-          grab(img.media, keyB64, "image", `image_${out.length}.bin`, "image/*");
+          grab(img.media, keyB64, "image", `image_${attachments.length}.bin`, "image/*");
           break;
         }
         case ITEM_FILE: {
@@ -235,19 +243,19 @@ var IlinkClient = class {
         case ITEM_VIDEO: {
           const v = it.video_item;
           if (!v?.media) break;
-          grab(v.media, v.media.aes_key, "video", `video_${out.length}.mp4`, "video/mp4");
+          grab(v.media, v.media.aes_key, "video", `video_${attachments.length}.mp4`, "video/mp4");
           break;
         }
         case ITEM_VOICE: {
           const v = it.voice_item;
           if (!v?.media || (v.text ?? "").trim()) break;
-          grab(v.media, v.media.aes_key, "audio", `voice_${out.length}.silk`, "audio/silk");
+          grab(v.media, v.media.aes_key, "audio", `voice_${attachments.length}.silk`, "audio/silk");
           break;
         }
       }
     }
     await Promise.all(tasks);
-    return out;
+    return { attachments, failures };
   }
   /** Send text (auto-chunked at 3800 characters, 100ms between chunks) */
   async sendText(to, text, contextToken, chunkSize = 3800) {
@@ -707,32 +715,28 @@ function extractLinks(text) {
   return out;
 }
 async function fetchArticle(transport, url, parseHtml) {
-  try {
-    const resp = await transport.get(
-      url,
-      {
-        "User-Agent": UA,
-        Accept: "text/html,application/xhtml+xml",
-        // ask for an uncompressed body; bodyTextAuto gunzips as a fallback
-        "Accept-Encoding": "identity"
-      },
-      2e4
-    );
-    if (resp.status !== 200) return null;
-    const html = await bodyTextAuto(resp);
-    const parse = parseHtml ?? ((h) => new DOMParser().parseFromString(h, "text/html"));
-    const doc = parse(html);
-    const title = doc.querySelector('meta[property="og:title"]')?.getAttribute("content") ?? doc.title ?? "";
-    if (!title.trim()) return null;
-    const description = doc.querySelector('meta[property="og:description"]')?.getAttribute("content") ?? doc.querySelector('meta[name="description"]')?.getAttribute("content") ?? "";
-    const root = doc.querySelector("#js_content") ?? doc.body;
-    const images = [];
-    const markdown = normalizeBlocks(toMd(root, images));
-    await downloadImages(transport, images);
-    return { url, title: cleanText(title), description: cleanText(description), account: accountName(doc), markdown, images };
-  } catch {
-    return null;
-  }
+  const resp = await transport.get(
+    url,
+    {
+      "User-Agent": UA,
+      Accept: "text/html,application/xhtml+xml",
+      // ask for an uncompressed body; bodyTextAuto gunzips as a fallback
+      "Accept-Encoding": "identity"
+    },
+    2e4
+  );
+  if (resp.status !== 200) throw new Error(`http ${resp.status}`);
+  const html = await bodyTextAuto(resp);
+  const parse = parseHtml ?? ((h) => new DOMParser().parseFromString(h, "text/html"));
+  const doc = parse(html);
+  const title = doc.querySelector('meta[property="og:title"]')?.getAttribute("content") ?? doc.title ?? "";
+  if (!title.trim()) throw new Error("no title found on page");
+  const description = doc.querySelector('meta[property="og:description"]')?.getAttribute("content") ?? doc.querySelector('meta[name="description"]')?.getAttribute("content") ?? "";
+  const root = doc.querySelector("#js_content") ?? doc.body;
+  const images = [];
+  const markdown = normalizeBlocks(toMd(root, images));
+  await downloadImages(transport, images);
+  return { url, title: cleanText(title), description: cleanText(description), account: accountName(doc), markdown, images };
 }
 function accountName(doc) {
   return doc.querySelector("#js_name")?.textContent?.trim() ?? "";
@@ -950,8 +954,10 @@ var en = {
   "reply.table.location": "Saved to",
   "reply.article": "**Article saved**",
   "reply.article.assets": "{{n}} image(s) attached, saved to {{dir}}",
-  "reply.articleFailed": "Link received, but fetching the article failed.",
+  "reply.articleFailed": "Link received, but fetching the article failed: {{reason}}",
   "reply.attachFailed": "Failed to save attachment: {{name}}",
+  "reply.attachment.failed": "failed to save",
+  "reply.article.failed": "failed to fetch",
   "reply.recordFailed": "Message received, but recording it to the vault failed.",
   "err.noToken": "No send credential yet",
   "err.noToken.hint": "Replying requires a context token handed out by WeChat: first send any message to the bot from WeChat, then retry.",
@@ -1051,8 +1057,10 @@ var zh = {
   "reply.table.location": "\u4FDD\u5B58\u4F4D\u7F6E",
   "reply.article": "**\u6587\u7AE0\u5DF2\u4FDD\u5B58**",
   "reply.article.assets": "{{n}} \u5F20\u914D\u56FE,\u4FDD\u5B58\u5728 {{dir}}",
-  "reply.articleFailed": "\u6536\u5230\u94FE\u63A5,\u4F46\u6587\u7AE0\u6293\u53D6\u5931\u8D25\u3002",
+  "reply.articleFailed": "\u6536\u5230\u94FE\u63A5,\u4F46\u6587\u7AE0\u6293\u53D6\u5931\u8D25: {{reason}}",
   "reply.attachFailed": "\u9644\u4EF6\u4FDD\u5B58\u5931\u8D25: {{name}}",
+  "reply.attachment.failed": "\u4FDD\u5B58\u5931\u8D25",
+  "reply.article.failed": "\u6293\u53D6\u5931\u8D25",
   "reply.recordFailed": "\u6D88\u606F\u5DF2\u6536\u5230,\u4F46\u5199\u5165 vault \u5931\u8D25\u3002",
   "err.noToken": "\u8FD8\u6CA1\u6709\u53D1\u9001\u51ED\u636E",
   "err.noToken.hint": "\u56DE\u590D\u9700\u8981\u5FAE\u4FE1\u4E0B\u53D1\u7684 context token\u2014\u2014\u5148\u4ECE\u5FAE\u4FE1\u7ED9\u673A\u5668\u4EBA\u53D1\u4EFB\u610F\u4E00\u6761\u6D88\u606F,\u518D\u91CD\u8BD5\u3002",
@@ -1152,8 +1160,10 @@ var tw = {
   "reply.table.location": "\u5132\u5B58\u4F4D\u7F6E",
   "reply.article": "**\u6587\u7AE0\u5DF2\u5132\u5B58**",
   "reply.article.assets": "{{n}} \u5F35\u914D\u5716,\u5132\u5B58\u5728 {{dir}}",
-  "reply.articleFailed": "\u6536\u5230\u9023\u7D50,\u4F46\u6587\u7AE0\u6293\u53D6\u5931\u6557\u3002",
+  "reply.articleFailed": "\u6536\u5230\u9023\u7D50,\u4F46\u6587\u7AE0\u6293\u53D6\u5931\u6557: {{reason}}",
   "reply.attachFailed": "\u9644\u4EF6\u5132\u5B58\u5931\u6557: {{name}}",
+  "reply.attachment.failed": "\u5132\u5B58\u5931\u6557",
+  "reply.article.failed": "\u6293\u53D6\u5931\u6557",
   "reply.recordFailed": "\u8A0A\u606F\u5DF2\u6536\u5230,\u4F46\u5BEB\u5165 vault \u5931\u6557\u3002",
   "err.noToken": "\u9084\u6C92\u6709\u767C\u9001\u6191\u8B49",
   "err.noToken.hint": "\u56DE\u8986\u9700\u8981\u5FAE\u4FE1\u4E0B\u767C\u7684 context token\u2014\u2014\u8ACB\u5148\u5F9E\u5FAE\u4FE1\u7D66\u6A5F\u5668\u4EBA\u767C\u4EFB\u610F\u4E00\u689D\u8A0A\u606F,\u518D\u91CD\u8A66\u3002",
@@ -1215,39 +1225,39 @@ function buildSendFailure(errmsg, ret, contextToken = "") {
 }
 var cell = (s) => s.replace(/\|/g, "\\|");
 function buildReceiptReplies(results) {
-  const small = (s) => `<small>${s}</small>`;
   const out = [];
-  const failed = [];
   const table = [];
   for (const r of results) {
     if (!r.ok) {
-      failed.push(t("reply.recordFailed"));
+      out.push(t("reply.recordFailed"));
       continue;
     }
     for (const p of r.attachmentPaths) {
       const name = p.split("/").pop() ?? p;
       table.push(`| ${cell(name)} | ${cell(p)} |`);
     }
-    if (r.attachmentFailures.length) {
-      failed.push(t("reply.attachFailed", { name: r.attachmentFailures.join(", ") }));
+    for (const f of r.attachmentFailures) {
+      table.push(`| ${cell(f)} | ${t("reply.attachment.failed")} |`);
     }
     for (const a of r.articleAssets) {
       table.push(`| ${cell(a.title)} | ${cell(a.note)} |`);
       if (a.assetCount > 0) {
-        table.push(`| ${small(t("reply.article.assets", { n: a.assetCount, dir: a.assetsDir }))} | |`);
+        table.push(`| ${t("reply.article.assets", { n: a.assetCount, dir: a.assetsDir })} | |`);
       }
     }
-    if (!r.attachmentPaths.length && !r.attachmentFailures.length && r.linkCount && !r.articleAssets.length) {
-      out.push(t("reply.articleFailed"));
+    for (const reason of r.articleFailures) {
+      table.push(`| ${cell(t("reply.article.failed"))} | ${cell(reason)} |`);
     }
-    if (!r.attachmentPaths.length && !r.attachmentFailures.length && !r.linkCount && !r.articleAssets.length) {
-      out.push(r.appended && r.dailyNote ? `${t("reply.received")} ${small(r.dailyNote)}` : t("reply.received"));
+    if (!r.attachmentPaths.length && !r.attachmentFailures.length && r.linkCount && !r.articleAssets.length && !r.articleFailures.length) {
+      out.push(t("reply.articleFailed", { reason: "unknown" }));
+    }
+    if (!r.attachmentPaths.length && !r.attachmentFailures.length && !r.linkCount && !r.articleAssets.length && !r.articleFailures.length) {
+      out.push(r.appended && r.dailyNote ? `${t("reply.received")} ${r.dailyNote}` : t("reply.received"));
     }
   }
   if (table.length) {
     out.unshift(`| ${t("reply.table.file")} | ${t("reply.table.location")} |`, "| --- | --- |", ...table);
   }
-  out.push(...failed);
   return out;
 }
 
@@ -1285,8 +1295,9 @@ async function importMessage(app, transport, msg, settings) {
     dailyNote: "",
     articleAssets: [],
     attachmentPaths: [],
-    attachmentFailures: [],
-    linkCount: 0
+    attachmentFailures: msg.attachmentFailures.map((f) => `${f.name} (${f.reason})`),
+    linkCount: 0,
+    articleFailures: []
   };
   await ensureFolder(app, settings.inboxFolder);
   await ensureFolder(app, settings.attachmentFolder);
@@ -1298,13 +1309,12 @@ async function importMessage(app, transport, msg, settings) {
   let display = msg.text.trim();
   if (settings.fetchArticles && links.length) {
     for (const url of links.slice(0, 5)) {
-      const info = await fetchArticle(transport, url, settings.parseHtml);
-      if (!info) continue;
-      const title = info.title;
-      const accountDir = settings.groupArticlesByAccount && info.account ? `/${sanitizeFileName(info.account)}` : "";
-      const notePath = `${settings.articleFolder}${accountDir}/${dayStamp(msg.timeMs)} ${sanitizeFileName(title)}.md`;
-      const mediaFolder = `${settings.articleFolder}${accountDir}/assets`;
       try {
+        const info = await fetchArticle(transport, url, settings.parseHtml);
+        const title = info.title;
+        const accountDir = settings.groupArticlesByAccount && info.account ? `/${sanitizeFileName(info.account)}` : "";
+        const notePath = `${settings.articleFolder}${accountDir}/${dayStamp(msg.timeMs)} ${sanitizeFileName(title)}.md`;
+        const mediaFolder = `${settings.articleFolder}${accountDir}/assets`;
         if (!await app.vault.adapter.exists(notePath)) {
           await ensureFolder(app, mediaFolder);
           const base = `${dayStamp(msg.timeMs)}_${timeOfDay(msg.timeMs).replace(":", "")}`;
@@ -1344,7 +1354,8 @@ async function importMessage(app, transport, msg, settings) {
           result.articleAssets.push({ title, note: notePath, assetsDir: mediaFolder, assetCount: savedAssets });
         }
         display = display.split(url).join(`[[${notePath.replace(/\.md$/, "")}|${title}]]`);
-      } catch {
+      } catch (e) {
+        result.articleFailures.push(String(e?.message ?? e));
       }
     }
   }
@@ -1360,8 +1371,8 @@ async function importMessage(app, transport, msg, settings) {
       result.attachmentPaths.push(path);
       const embed = att.kind === "image" ? `![[${path}]]` : `[[${path}|${att.name}]]`;
       lines.push("", ...quoteBlock(embed));
-    } catch {
-      result.attachmentFailures.push(att.name);
+    } catch (e) {
+      result.attachmentFailures.push(`${att.name} (${String(e?.message ?? e)})`);
       lines.push("", ...quoteBlock(t("importer.attachFailed", { name: att.name })));
     }
   }
@@ -2726,8 +2737,9 @@ var WechatianPlugin = class extends import_obsidian6.Plugin {
             attachmentPaths: result.attachmentPaths,
             attachmentFailures: result.attachmentFailures,
             linkCount: result.linkCount,
-            articleAssets: result.articleAssets
-          } : { ok: false, appended: false, dailyNote: "", attachmentPaths: [], attachmentFailures: [], linkCount: 0, articleAssets: [] }
+            articleAssets: result.articleAssets,
+            articleFailures: result.articleFailures
+          } : { ok: false, appended: false, dailyNote: "", attachmentPaths: [], attachmentFailures: [], linkCount: 0, articleAssets: [], articleFailures: [] }
         ];
       }
     }

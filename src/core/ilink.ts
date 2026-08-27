@@ -7,6 +7,7 @@ import type { HttpTransport } from './http';
 import { bodyJson, bodyText, HttpError } from './http';
 import { downloadUrl, parseAesKey, decryptEcb, encryptEcb, md5Hex, ecbPaddedSize } from './crypto';
 import {
+  type AttachmentFailure,
   type GetUpdatesResult,
   type GetUploadUrlResult,
   type InboundAttachment,
@@ -127,8 +128,8 @@ export class IlinkClient {
 
     const items = m.item_list ?? [];
     const text = extractText(items);
-    const attachments = await this.collectMedia(items);
-    if (!text.trim() && attachments.length === 0) return null;
+    const { attachments, failures: attachmentFailures } = await this.collectMedia(items);
+    if (!text.trim() && attachments.length === 0 && attachmentFailures.length === 0) return null;
 
     return {
       from,
@@ -136,15 +137,17 @@ export class IlinkClient {
       timeMs: m.create_time_ms ?? Date.now(),
       text,
       attachments,
+      attachmentFailures,
       raw: m,
     };
   }
 
-  /** Download and decrypt media in the message; a single failure is skipped without affecting text */
-  private async collectMedia(items: IlinkMsgItem[]): Promise<InboundAttachment[]> {
-    const out: InboundAttachment[] = [];
+  /** Download and decrypt media in the message; failures are recorded with a reason, text still comes through */
+  private async collectMedia(items: IlinkMsgItem[]): Promise<{ attachments: InboundAttachment[]; failures: AttachmentFailure[] }> {
+    const attachments: InboundAttachment[] = [];
+    const failures: AttachmentFailure[] = [];
     const cdnBase = this.opts.cdnBase.replace(/\/$/, '');
-    if (!cdnBase) return out;
+    if (!cdnBase) return { attachments, failures };
     const tasks: Promise<void>[] = [];
 
     const grab = (
@@ -162,11 +165,17 @@ export class IlinkClient {
         this.transport
           .get(url, {}, 60_000)
           .then((r) => {
+            if (r.status !== 200) {
+              failures.push({ kind, name, reason: `http ${r.status}` });
+              return;
+            }
             let buf: Buffer = Buffer.from(r.body);
             if (key) buf = decryptEcb(buf, key);
-            out.push({ kind, name, mime, data: new Uint8Array(buf) });
+            attachments.push({ kind, name, mime, data: new Uint8Array(buf) });
           })
-          .catch(() => undefined),
+          .catch((e: unknown) => {
+            failures.push({ kind, name, reason: String((e as Error)?.message ?? e) });
+          }),
       );
     };
 
@@ -180,7 +189,7 @@ export class IlinkClient {
             const raw = Buffer.from(img.aeskey, 'hex');
             if (raw.length === 16) keyB64 = raw.toString('base64');
           }
-          grab(img.media, keyB64, 'image', `image_${out.length}.bin`, 'image/*');
+          grab(img.media, keyB64, 'image', `image_${attachments.length}.bin`, 'image/*');
           break;
         }
         case ITEM_FILE: {
@@ -192,19 +201,19 @@ export class IlinkClient {
         case ITEM_VIDEO: {
           const v = it.video_item;
           if (!v?.media) break;
-          grab(v.media, v.media.aes_key, 'video', `video_${out.length}.mp4`, 'video/mp4');
+          grab(v.media, v.media.aes_key, 'video', `video_${attachments.length}.mp4`, 'video/mp4');
           break;
         }
         case ITEM_VOICE: {
           const v = it.voice_item;
           if (!v?.media || (v.text ?? '').trim()) break;
-          grab(v.media, v.media.aes_key, 'audio', `voice_${out.length}.silk`, 'audio/silk');
+          grab(v.media, v.media.aes_key, 'audio', `voice_${attachments.length}.silk`, 'audio/silk');
           break;
         }
       }
     }
     await Promise.all(tasks);
-    return out;
+    return { attachments, failures };
   }
 
   /** Send text (auto-chunked at 3800 characters, 100ms between chunks) */

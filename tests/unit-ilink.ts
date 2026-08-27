@@ -234,6 +234,37 @@ test('poll: image attachment is downloaded and AES-decrypted', async () => {
   assert.equal(r.messages[0].text, ''); // media-only message still counts
 });
 
+test('poll: failed media download is recorded with a reason, not silently dropped', async () => {
+  const key = Buffer.from('0123456789abcdef');
+  const tr = new ScriptableTransport()
+    .on(/getupdates/, {
+      body: JSON.stringify({
+        ret: 0,
+        msgs: [
+          {
+            message_type: MSG_TYPE_USER,
+            from_user_id: 'alice',
+            message_id: 8,
+            create_time_ms: 1700000000000,
+            item_list: [
+              {
+                type: ITEM_IMAGE,
+                image_item: { media: { encrypt_query_param: 'enc-param', aes_key: key.toString('base64') } },
+              },
+            ],
+          },
+        ],
+      }),
+    })
+    .on(/cdn\.example\/download/, { status: 503, body: 'cdn down' });
+  const r = await client(tr).poll('');
+  assert.equal(r.messages.length, 1, 'media-only message survives when the download fails');
+  assert.equal(r.messages[0].attachments.length, 0);
+  const f = r.messages[0].attachmentFailures[0];
+  assert.equal(f.kind, 'image');
+  assert.ok(f.reason.includes('503'));
+});
+
 /* -------------------------------------------------------------- sendText */
 
 test('sendText: chunked into multiple gateway calls', async () => {

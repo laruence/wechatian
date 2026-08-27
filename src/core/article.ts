@@ -40,41 +40,38 @@ export function extractLinks(text: string): string[] {
 /**
  * Fetch an article and convert it to markdown. WeChat official-account pages keep
  * the body in #js_content and lazy-load images via data-src; generic pages fall
- * back to <body>. Returns null on failure; the caller keeps a plain link entry.
+ * back to <body>. Throws an Error with a short reason on failure, so callers
+ * can tell the user why (e.g. "http 503", "no title found on page").
  */
-export async function fetchArticle(transport: HttpTransport, url: string, parseHtml?: HtmlParser): Promise<ArticleInfo | null> {
-  try {
-    const resp = await transport.get(
-      url,
-      {
-        'User-Agent': UA,
-        Accept: 'text/html,application/xhtml+xml',
-        // ask for an uncompressed body; bodyTextAuto gunzips as a fallback
-        'Accept-Encoding': 'identity',
-      },
-      20_000,
-    );
-    if (resp.status !== 200) return null;
-    const html = await bodyTextAuto(resp);
-    const parse = parseHtml ?? ((h: string) => new DOMParser().parseFromString(h, 'text/html'));
-    const doc = parse(html);
+export async function fetchArticle(transport: HttpTransport, url: string, parseHtml?: HtmlParser): Promise<ArticleInfo> {
+  const resp = await transport.get(
+    url,
+    {
+      'User-Agent': UA,
+      Accept: 'text/html,application/xhtml+xml',
+      // ask for an uncompressed body; bodyTextAuto gunzips as a fallback
+      'Accept-Encoding': 'identity',
+    },
+    20_000,
+  );
+  if (resp.status !== 200) throw new Error(`http ${resp.status}`);
+  const html = await bodyTextAuto(resp);
+  const parse = parseHtml ?? ((h: string) => new DOMParser().parseFromString(h, 'text/html'));
+  const doc = parse(html);
 
-    const title = doc.querySelector('meta[property="og:title"]')?.getAttribute('content') ?? doc.title ?? '';
-    if (!title.trim()) return null;
-    const description =
-      doc.querySelector('meta[property="og:description"]')?.getAttribute('content') ??
-      doc.querySelector('meta[name="description"]')?.getAttribute('content') ??
-      '';
+  const title = doc.querySelector('meta[property="og:title"]')?.getAttribute('content') ?? doc.title ?? '';
+  if (!title.trim()) throw new Error('no title found on page');
+  const description =
+    doc.querySelector('meta[property="og:description"]')?.getAttribute('content') ??
+    doc.querySelector('meta[name="description"]')?.getAttribute('content') ??
+    '';
 
-    const root = doc.querySelector('#js_content') ?? doc.body;
-    const images: ArticleImage[] = [];
-    const markdown = normalizeBlocks(toMd(root, images));
-    await downloadImages(transport, images);
+  const root = doc.querySelector('#js_content') ?? doc.body;
+  const images: ArticleImage[] = [];
+  const markdown = normalizeBlocks(toMd(root, images));
+  await downloadImages(transport, images);
 
-    return { url, title: cleanText(title), description: cleanText(description), account: accountName(doc), markdown, images };
-  } catch {
-    return null;
-  }
+  return { url, title: cleanText(title), description: cleanText(description), account: accountName(doc), markdown, images };
 }
 
 /**

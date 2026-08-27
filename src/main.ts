@@ -410,8 +410,9 @@ export default class WechatianPlugin extends Plugin {
                 attachmentFailures: result.attachmentFailures,
                 linkCount: result.linkCount,
                 articleAssets: result.articleAssets,
+                articleFailures: result.articleFailures,
               }
-            : { ok: false, appended: false, dailyNote: '', attachmentPaths: [], attachmentFailures: [], linkCount: 0, articleAssets: [] },
+            : { ok: false, appended: false, dailyNote: '', attachmentPaths: [], attachmentFailures: [], linkCount: 0, articleAssets: [], articleFailures: [] },
         ];
       }
     }

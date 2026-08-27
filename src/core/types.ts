@@ -59,12 +59,20 @@ export interface InboundAttachment {
   data: Uint8Array;
 }
 
+/** Download/decrypt failure for one media item — the receipt names the reason */
+export interface AttachmentFailure {
+  kind: InboundAttachment['kind'];
+  name: string;
+  reason: string;
+}
+
 export interface InboundMessage {
   from: string;
   messageId: string;
   timeMs: number;
   text: string;
   attachments: InboundAttachment[];
+  attachmentFailures: AttachmentFailure[];
   raw: IlinkMessage;
 }
 
