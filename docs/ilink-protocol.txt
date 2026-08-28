@@ -1,0 +1,351 @@
+================================================================================
+iLink（智联）协议参考 — Wechatian 实现所依据的完整协议总结
+================================================================================
+
+最后更新：2026-08-28
+信息来源：
+  - Wechatian 实现代码（src/core/，与真实网关实测验证，测试钉死）
+  - x1ah/wechat-ilink-demo（@tencent-weixin/openclaw-weixin 1.0.2 源码拆解）
+
+图例：
+  [实测] 已在真实网关上跑通并验证
+  [推导] 依据官方 SDK 源码拆解，形状已核对但未在真实网关单独验证
+
+
+--------------------------------------------------------------------------------
+1. 概览
+--------------------------------------------------------------------------------
+
+iLink（智联）是腾讯 2026 年通过"微信 ClawBot 插件"首次开放的个人号官方
+Bot API。底层是纯 HTTP/JSON 协议，无 WebSocket，无自定义二进制帧，接入
+域名 ilinkai.weixin.qq.com。
+
+官方 SDK 是 @tencent-weixin/openclaw-weixin（OpenClaw AI Gateway 框架的
+微信 Channel Plugin）。协议本身独立：任何客户端都可以脱离 OpenClaw 直接
+调用，Wechatian 即是独立实现。
+
+关键特征：
+  - 扫码绑定：Bot 绑定到扫码者的微信个人号，一对一
+  - 半双工触发：Bot 不能主动推送，回复必须携带用户消息附带的
+    context_token（由用户先发消息触发）
+  - 会话制：bot_token 会过期（错误码 -14），过期后需重新扫码
+  - 腾讯保留管控权：可限速、拦截、终止服务
+
+
+--------------------------------------------------------------------------------
+2. 端点总览
+--------------------------------------------------------------------------------
+
+  路径                              方法    用途                        客户端超时
+  ------------------------------    ----    --------------------------  --------
+  ilink/bot/get_bot_qrcode          GET     获取登录二维码              [实测]
+  ilink/bot/get_qrcode_status       GET     轮询扫码状态                [实测]
+  ilink/bot/getupdates              POST    长轮询收消息（~35s hold）    45s [实测]
+  ilink/bot/sendmessage             POST    发送文本/媒体消息            15s [实测]
+  ilink/bot/getuploadurl            POST    获取 CDN 预签名上传地址      15s [实测]
+  ilink/bot/getconfig               POST    获取 bot 配置（含
+                                            typing_ticket）             [推导]
+  ilink/bot/sendtyping              POST    发送"正在输入"状态           [推导]
+
+所有 POST 端点都要带 base_info: { channel_version: "<版本串>" }。
+官方 SDK 用 "1.0.2"；Wechatian 用 "wechatian-weixin/1.0"，网关只作标识
+记录，两种都能工作。
+
+CDN（媒体文件）走独立域名，不在上表内（见第 7、8 节）。
+
+
+--------------------------------------------------------------------------------
+3. 鉴权 / 公共请求头
+--------------------------------------------------------------------------------
+
+每个请求（含 GET）携带：
+
+  Content-Type: application/json          （POST）
+  AuthorizationType: ilink_bot_token      （固定字面量）
+  Authorization: Bearer <bot_token>       （登录后；获取二维码时无）
+  X-WECHAT-UIN: <uin>                     （防重放随机数）
+
+X-WECHAT-UIN 生成算法 [实测]：
+  随机 32 位整数（0..0xffffffff）
+    -> 转十进制字符串
+    -> 该字符串做 UTF-8 base64 编码
+  例：4294967295 -> "NDI5NDk2NzI5NQ=="
+  每次请求重新生成。
+
+bot_token：扫码登录确认后由 get_qrcode_status 返回，此后所有请求的
+Bearer 凭据。会话过期的表现是网关返回 errcode = -14。
+
+
+--------------------------------------------------------------------------------
+4. 扫码登录流
+--------------------------------------------------------------------------------
+
+4.1 获取二维码
+
+  GET /ilink/bot/get_bot_qrcode?bot_type=3
+
+  响应：
+    qrcode_img_content   二维码内容（URL）。这是给手机扫的东西 [实测]
+    qrcode               轮询 key。扫码后拿这个查状态 [实测]
+
+  陷阱：两个字段容易搞混 —— 展示/编码的是 qrcode_img_content，
+  qrcode 只是后续轮询用的句柄。
+
+4.2 轮询扫码状态
+
+  GET /ilink/bot/get_qrcode_status?qrcode=<轮询key>
+
+  响应字段：
+    status       "waiting" / "scanned" / "confirmed" / "expired"
+    bot_token    确认登录后返回
+    baseurl      专属接入域名（可能与默认域名不同！）
+    bot_id       Bot 标识
+
+  成功后必须改用返回的 baseurl 作为后续所有请求的 base [实测]。
+  Wechatian 行为：二维码过期自动重取（上限 3 次），总超时 8 分钟；
+  登录成功后把扫码者记为绑定用户，只接受其消息（白名单配对）。
+
+
+--------------------------------------------------------------------------------
+5. 收消息（长轮询）
+--------------------------------------------------------------------------------
+
+  POST /ilink/bot/getupdates
+  {
+    get_updates_buf: "<cursor>",            // 游标，首次为空串
+    base_info: { channel_version: "..." }
+  }
+
+行为：
+  - 服务端 hold 约 35 秒，有消息立即返回，无消息超时返回空
+  - 客户端超时应留余量（Wechatian 用 45s）；客户端超时不算错误，
+    直接进入下一轮
+  - 响应中的 get_updates_buf 是下一轮的游标；空值表示沿用旧游标
+
+响应：
+  msgs              消息数组（可能多条）
+  get_updates_buf   新游标
+  errcode           错误码；-14 = 会话过期（见第 10 节）
+
+消息对象（item_list 驱动的多段结构）：
+  message_type      1 = 用户消息；2 = Bot 自己的消息（必须过滤）
+  from_user_id      发送者 ilink 用户 id（含 @im.bot 后缀的跳过）
+  message_id        消息唯一 id（去重用）
+  create_time_ms    毫秒时间戳
+  context_token     回复凭据（见第 6 节）
+  item_list[]       内容段，每段有 type 字段：
+      1 文本   text_item.text
+      2 图片   image_item { media, aeskey? }
+      3 语音   voice_item { media, text? }   // text 是服务端转写
+      4 文件   file_item { media, file_name }
+      5 视频   video_item { media }
+
+引用消息 [实测]：文本段的 ref_msg 字段承载被引用内容
+（ref_msg.title、ref_msg.message_item）。只读 —— 发送时服务端忽略
+引用字段，Bot 不能发引用回复。
+
+语音消息：voice_item.text 非空时是服务端转写文本；否则媒体是 SILK
+格式音频（官方 SDK 用 silk-wasm 转 WAV，24kHz 单声道 16bit；
+Wechatian 目前直接存 .silk）。
+
+
+--------------------------------------------------------------------------------
+6. 发消息
+--------------------------------------------------------------------------------
+
+  POST /ilink/bot/sendmessage
+  {
+    msg: {
+      from_user_id: "",                     // 发送时留空
+      to_user_id: "<ilink_user_id>",
+      client_id: "<幂等键，任意唯一串>",
+      message_type: 2,                      // 2 = Bot 发送
+      message_state: 2,                     // 2 = FINISH（完整消息）
+      context_token: "<用户消息带来的凭据>",
+      item_list: [ ... ]                    // 见第 5 节的段结构
+    },
+    base_info: { channel_version: "..." }
+  }
+
+成功判定 [实测]：网关的成功响应形状不统一 —— 有的返回 {"ret": 0}，
+有的返回 {"errcode": 0}，有的只回 {} 或 {"errmsg": ""}。可靠策略：
+  有 ret 字段     -> ret == 0 为成功
+  否则有 errcode  -> errcode == 0 为成功
+  否则            -> HTTP 200 且 errmsg 为空即为成功
+
+context_token 机制（协议的根本约束）：
+  - 每条用户消息携带一个 context_token
+  - Bot 回复必须带最近收到的 context_token
+  - 没有它就无法发送（"用户必须先说话"）
+  - Wechatian 按用户缓存最新的 token（state.json contextTokens）
+
+文本消息 [实测]：
+  - item_list 单段 { type: 1, text_item: { text } }
+  - 单条上限 3800 字符（Unicode 码点计，避免切断表情/汉字）
+  - 超长自动分片多段发送，片间 100ms 间隔
+
+媒体消息：见第 7 节（媒体发送链）。
+
+
+--------------------------------------------------------------------------------
+7. 媒体发送（完整加解密链）
+--------------------------------------------------------------------------------
+
+三步：本地加密 -> getuploadurl 拿上传凭证 -> CDN 上传 -> sendmessage 引用。
+
+7.1 加密 [实测]
+  算法：AES-128-ECB，PKCS7 填充
+  密钥：每文件随机 16 字节
+
+7.2 申请上传地址
+  POST /ilink/bot/getuploadurl
+  {
+    filekey: "<随机 hex>",
+    media_type: 1|2|3,           // 1=图片 2=视频 3=文件
+    to_user_id: "<收件人>",
+    rawsize: <明文长度>,
+    rawfilemd5: "<明文 md5 hex>",
+    filesize: <密文长度>,         // ECB 填充后的尺寸
+    no_need_thumb: true,
+    aeskey: "<密钥 hex 字符串>",   // 注意：此处是裸 hex
+    base_info: { ... }
+  }
+
+  响应（新旧网关两种形状都要兼容 [实测]）：
+    upload_full_url   新版：完整 CDN 上传 URL
+    upload_param      旧版：需拼成
+      <cdn_base>/upload?encrypted_query_param=<upload_param>&filekey=<filekey>
+
+7.3 上传密文到 CDN [实测]
+  POST <upload_url>
+  Content-Type: application/octet-stream
+  Body: 密文原文
+  上限 100MB。
+
+  响应头 x-encrypted-param = 下载凭证（download_param）。
+  5xx 重试（最多 3 次），4xx 快速失败。
+
+7.4 sendmessage 携带媒体引用 [实测]
+  item_list 按类型：
+    图片：{ type: 2, image_item: { media: M, mid_size: <密文长度> } }
+    视频：{ type: 5, video_item: { media: M, video_size: <密文长度> } }
+    文件：{ type: 4, file_item: { media: M, file_name, len: "<明文长度>" } }
+
+  M = {
+    encrypt_query_param: <第 7.3 步的下载凭证>,
+    aes_key: <密钥编码>,
+    encrypt_type: 1
+  }
+
+关键不对称 [实测，有测试钉死]：
+  getuploadurl 的 aeskey      = 裸 hex 字符串（32 字符）
+  sendmessage 的 media.aes_key = base64(hex 字符串)
+  两处编码不同，混用会导致对方无法解密。
+
+
+--------------------------------------------------------------------------------
+8. 媒体接收（下载解密）
+--------------------------------------------------------------------------------
+
+消息段里的 media 字段：
+  encrypt_query_param   下载凭证
+  aes_key               密钥（编码不统一，两种都要兼容 [实测]）
+
+下载：
+  GET <cdn_base>/download?<encrypt_query_param 拼接>
+
+解密前的密钥归一化 [实测]：
+  - aes_key 可能直接是 16 字节的 base64
+  - 也可能是 base64(hex 字符串)（32 字符 hex 的 base64）
+  - 图片消息另有顶层 aeskey 字段：是裸 hex 字符串，
+    解出 16 字节后优先于 media.aes_key
+
+解密后即为明文媒体。图片没有文件名和扩展名：靠魔数识别
+（JPEG/PNG/GIF/WebP）。Wechatian 对入站媒体设 100MB 上限，
+超限记失败不落盘。
+
+
+--------------------------------------------------------------------------------
+9. typing 状态（"正在输入"）
+--------------------------------------------------------------------------------
+
+[推导] 依据官方 SDK 拆解 + demo 验证形状；Wechatian 已实现（2026-08-28）
+但尚未在真实网关上验证行为。
+
+两步：不能直接发，要先拿 ticket。
+
+9.1 获取 ticket
+  POST /ilink/bot/getconfig
+  { ilink_user_id, context_token, base_info }
+  -> 响应含 typing_ticket
+
+9.2 发送状态
+  POST /ilink/bot/sendtyping
+  { ilink_user_id, typing_ticket, status: 1|2, base_info }
+  status 1 = 正在输入，2 = 取消
+
+运维参数（官方 SDK 实践）：
+  - ticket 按用户缓存 24 小时
+  - getconfig 失败指数退避重试（2s -> 4s -> ... -> 1h）
+  Wechatian：缓存 24h TTL；发送失败时失效重取一次重试；全程静默降级。
+
+
+--------------------------------------------------------------------------------
+10. 错误码与重试语义
+--------------------------------------------------------------------------------
+
+  errcode -14    会话过期（会话失效/风控）。官方 SDK 的 Session Guard：
+                 暂停该账号 60 分钟防风控。Wechatian 同值（暂停 1 小时，
+                 期间显示"已过期"状态，之后需重新扫码登录）。
+  ret != 0       发送被拒；errmsg 带原因。常见类别：缺凭据、无权限、
+                 频控。Wechatian 对频控类不重试（文件留在原地等下轮）。
+  HTTP 5xx       网关侧问题；媒体上传重试 3 次，其余按轮询退避
+                 （1s 起，指数翻倍，封顶 30s）。
+  长轮询超时      正常，不是错误。
+
+消息去重：网关故障重连后可能重放历史消息。Wechatian 按
+  "发送者|message_id|时间戳" 维护 2000 条去重环。
+
+
+--------------------------------------------------------------------------------
+11. 能力边界
+--------------------------------------------------------------------------------
+
+能做：
+  - 收发文本、图片、语音（含服务端转写）、文件、视频（单文件 ≤100MB）
+  - 识别引用消息（只读）
+  - 显示/取消"正在输入"状态
+
+不能做：
+  - 主动推送（无 context_token 就无法发送；这是协议级约束）
+  - 发送引用回复（ref_msg 发送时被服务端忽略）
+  - 多人会话、群聊（一对一绑定模型）
+  - 获取好友列表等社交关系数据
+
+腾讯保留随时限速、拦截、终止服务的权利。
+
+
+--------------------------------------------------------------------------------
+12. Wechatian 实现差异与备注
+--------------------------------------------------------------------------------
+
+  - channel_version 用 "wechatian-weixin/1.0"（官方 SDK 是 "1.0.2"）。
+    网关仅作通道标识，不影响功能
+  - 白名单配对：Wechatian 只接受扫码者本人的消息（官方 SDK 的
+    Pairing 机制等效实现）
+  - 消息文本提取：正文 + 引用 + 语音转写合并
+  - 入站语音直接存 .silk（未做 SILK->WAV 转码；如需转码参考
+    官方 SDK 的 silk-wasm 方案）
+  - markdown 发送：网关按纯文本渲染；官方 SDK 会把 AI 输出的
+    markdown 降级为微信友好文本，Wechatian 原样发送
+
+
+--------------------------------------------------------------------------------
+13. 待验证项
+--------------------------------------------------------------------------------
+
+  [ ] typing 全链路在真实网关的行为（getconfig 返回、ticket 实际有效期）
+  [ ] 会话过期后 context_token 的清理策略（目前保留旧值）
+  [ ] 长轮询 35s hold 的网关侧上限是否随版本变化
+
+================================================================================
