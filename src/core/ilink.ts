@@ -6,6 +6,7 @@
 import type { HttpTransport } from './http';
 import { bodyJson, bodyText, HttpError } from './http';
 import { downloadUrl, parseAesKey, decryptEcb, encryptEcbInto, md5Hex, ecbPaddedSize } from './crypto';
+import { isSilk, silkToWav } from './silk-decoder';
 import {
   type AttachmentFailure,
   type GetUpdatesResult,
@@ -166,7 +167,7 @@ export class IlinkClient {
       tasks.push(
         this.transport
           .get(url, {}, 60_000)
-          .then((r) => {
+          .then(async (r) => {
             if (r.status !== 200) {
               failures.push({ kind, name, reason: `http ${r.status}` });
               return;
@@ -177,6 +178,16 @@ export class IlinkClient {
             }
             let buf: Buffer = Buffer.from(r.body);
             if (key) buf = decryptEcb(buf, key);
+            // Voice arrives as WeChat SILK, which no player renders. Transcode
+            // to WAV in-plugin so the note embed is playable. On any failure we
+            // fall back to the raw .silk so the audio is never lost.
+            if (kind === 'audio' && isSilk(buf)) {
+              const wav = await silkToWav(buf).catch(() => null);
+              if (wav) {
+                attachments.push({ kind, name: name.replace(/\.silk$/i, '.wav'), mime: 'audio/wav', data: wav });
+                return;
+              }
+            }
             attachments.push({ kind, name, mime, data: new Uint8Array(buf) });
           })
           .catch((e: unknown) => {
@@ -212,7 +223,10 @@ export class IlinkClient {
         }
         case ITEM_VOICE: {
           const v = it.voice_item;
-          if (!v?.media || (v.text ?? '').trim()) break;
+          if (!v?.media) break;
+          // keep the audio even when the gateway ships an ASR transcript:
+          // the transcript becomes the note text, the transcoded wav stays
+          // playable — one no longer substitutes for the other
           grab(v.media, v.media.aes_key, 'audio', `voice_${prefix}_${attachments.length}.silk`, 'audio/silk');
           break;
         }

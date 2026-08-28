@@ -1,10 +1,13 @@
 /** Node tests for article fetching: HTML -> markdown via an injected DOM parser */
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import type { App } from 'obsidian';
 import { parseHTML, type Document } from 'linkedom';
 import { fetchArticle, type HtmlParser } from '../src/core/article';
 import type { HttpTransport, HttpResponse } from '../src/core/http';
 import { lowerHeaders } from '../src/core/http';
+import { importMessage } from '../src/core/importer';
+import type { InboundMessage } from '../src/core/types';
 
 // Node has no window/article scheduling shims needed here
 (globalThis as { window?: unknown }).window = globalThis;
@@ -92,4 +95,80 @@ test('fetchArticle: image download failure keeps the placeholder with null data'
   // it for a remote markdown link when img.data is null
   assert.ok(info!.markdown.includes('![[img:0]]'), 'placeholder preserved for the caller');
   assert.equal(info!.images[0].data, null);
+});
+
+/* ---------------------------------------------- importMessage: overwrite */
+
+/** In-memory fake of the Obsidian vault adapter subset the importer uses */
+class Vault {
+  files = new Map<string, string>();
+  bins = new Map<string, Uint8Array>();
+  adapter = {
+    exists: async (p: string) => this.files.has(p) || this.bins.has(p),
+    read: async (p: string) => {
+      if (!this.files.has(p)) throw new Error(`ENOENT: ${p}`);
+      return this.files.get(p)!;
+    },
+    append: async (p: string, c: string) => this.files.set(p, (this.files.get(p) ?? '') + c),
+    write: async (p: string, c: string) => this.files.set(p, c),
+    writeBinary: async (p: string, c: ArrayBuffer) => this.bins.set(p, new Uint8Array(c)),
+    remove: async (p: string) => {
+      this.files.delete(p);
+      this.bins.delete(p);
+    },
+  };
+  app = {
+    vault: {
+      adapter: this.adapter,
+      create: async (p: string, c: string) => this.adapter.write(p, c),
+      createFolder: async () => undefined,
+    },
+  } as unknown as App;
+}
+
+const ARTICLE_MSG = (text: string, id: string): InboundMessage => ({
+  from: 'user123',
+  messageId: id,
+  timeMs: new Date(2026, 7, 27, 14, 30).getTime(),
+  text,
+  attachments: [],
+  attachmentFailures: [],
+  raw: {},
+});
+
+const IMPORT_OPTS = {
+  inboxFolder: 'Wechatian',
+  attachmentFolder: 'Wechatian/attachments',
+  articleFolder: 'Wechatian/articles',
+  fetchArticles: true,
+  groupArticlesByAccount: false,
+  parseHtml,
+};
+
+test('importMessage: article note keeps the date prefix, daily note links it in 《》', async () => {
+  const v = new Vault();
+  const r = await importMessage(v.app, articleTransport(WECHAT_PAGE), ARTICLE_MSG('https://mp.weixin.qq.com/s/xyz', 'm0'), IMPORT_OPTS);
+  assert.equal(r.articleAssets[0].note, 'Wechatian/articles/2026-08-27 测试文章标题.md', 'date prefix on the note name');
+  const daily = v.files.get('Wechatian/2026-08-27.md')!;
+  assert.ok(daily.includes('[[Wechatian/articles/2026-08-27 测试文章标题|《测试文章标题》]]'), 'article linked with 《》 in the daily note');
+});
+
+test('importMessage: re-sending an article link overwrites the existing note', async () => {
+  const v = new Vault();
+  const url = 'https://mp.weixin.qq.com/s/xyz';
+
+  const first = await importMessage(v.app, articleTransport(WECHAT_PAGE), ARTICLE_MSG(url, 'm1'), IMPORT_OPTS);
+  assert.equal(first.articleAssets.length, 1);
+  const notePath = first.articleAssets[0].note;
+  const firstImages = [...v.bins.keys()];
+  assert.ok(firstImages.some((p) => p.includes('assets')), 'first import saved an image');
+  assert.ok(v.files.get(notePath)!.includes('这是正文'));
+
+  // re-send the same link: the stale note and its images are replaced, not skipped
+  const second = await importMessage(v.app, articleTransport(WECHAT_PAGE), ARTICLE_MSG(url, 'm2'), IMPORT_OPTS);
+  assert.equal(second.articleAssets.length, 1, 'duplicate is recorded again, not silently skipped');
+  assert.equal(second.articleAssets[0].note, notePath, 'same note path is reused');
+  assert.ok(v.files.get(notePath)!.includes('这是正文'), 'note content rewritten');
+  // no orphaned image files accumulate from the first import
+  assert.deepEqual([...v.bins.keys()].sort(), firstImages.sort(), 'old images replaced one-for-one');
 });

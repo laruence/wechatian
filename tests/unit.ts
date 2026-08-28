@@ -11,6 +11,7 @@ import { lowerHeaders } from '../src/core/http';
 import { parseAesKey, encryptEcb, decryptEcb, encryptEcbInto, downloadUrl, detectImageExt, md5Hex, ecbPaddedSize } from '../src/core/crypto';
 import { extractLinks } from '../src/core/article';
 import { importMessage, sanitizeFileName, dayStamp, timeOfDay, quoteBlock, ensureFolder } from '../src/core/importer';
+import { encode, silkToWav } from '../src/core/silk-decoder';
 import type { InboundMessage } from '../src/core/types';
 import {
   applyLanguage,
@@ -241,66 +242,75 @@ test('dictionaries: en/zh/tw key parity', () => {
 test('applyLanguage / resolvedLanguage / t', () => {
   applyLanguage('en');
   assert.equal(resolvedLanguage(), 'en');
-  assert.equal(t('reply.done'), 'Received and saved');
   applyLanguage('zh');
   assert.equal(resolvedLanguage(), 'zh');
-  assert.equal(t('reply.done'), '收到,已完成保存');
+  assert.equal(t('importer.received'), '接收');
   applyLanguage('tw');
   assert.equal(resolvedLanguage(), 'tw');
   assert.equal(t('set.autoReply'), '總是回覆');
-  assert.equal(t('reply.done'), '收到,已完成儲存');
   applyLanguage('en');
 });
 
 /* ------------------------------------------------- receipt reply assembly */
 
-const RECEIPT_OK = { ok: true, appended: true, dailyNote: 'Wechatian/2026-08-27.md', attachmentPaths: [], attachmentFailures: [], linkCount: 0, articleAssets: [], articleFailures: [] };
+const RECEIPT_OK = { ok: true, appended: true, dailyNote: 'Wechatian/2026-08-27.md', attachments: [], attachmentFailures: [], linkCount: 0, articleAssets: [], articleFailures: [] };
 
-test('buildReceiptReplies: plain text gets the one-line receipt', () => {
+test('buildReceiptReplies: plain text points at the daily note', () => {
   applyLanguage('zh');
-  assert.deepEqual(buildReceiptReplies([RECEIPT_OK]), ['收到,已完成保存']);
+  assert.deepEqual(buildReceiptReplies([RECEIPT_OK]), ['收到消息, 记录到了: `2026-08-27.md`']);
 });
 
-test('buildReceiptReplies: one line per recorded message', () => {
+test('buildReceiptReplies: one uniform line per attachment, Wechatian/ prefix stripped', () => {
   applyLanguage('zh');
   const lines = buildReceiptReplies([
-    { ...RECEIPT_OK, attachmentPaths: ['Wechatian/attachments/a.jpg'] },
-    { ...RECEIPT_OK, attachmentPaths: ['Wechatian/attachments/b.pdf'] },
+    { ...RECEIPT_OK, attachments: [{ kind: 'image', path: 'Wechatian/attachments/a.jpg' }] },
+    { ...RECEIPT_OK, attachments: [{ kind: 'file', path: 'Wechatian/attachments/b.pdf' }] },
   ]);
-  assert.deepEqual(lines, ['收到,已完成保存\n收到,已完成保存']);
+  assert.deepEqual(lines, ['收到图片, 记录到了: `attachments/a.jpg`\n收到文件, 记录到了: `attachments/b.pdf`']);
+});
+
+test('buildReceiptReplies: article note is reported as an article, no title echoed', () => {
+  applyLanguage('zh');
+  const lines = buildReceiptReplies([
+    {
+      ...RECEIPT_OK,
+      articleAssets: [{ title: '深度长文', url: 'https://mp.weixin.qq.com/s/abc', note: 'Wechatian/articles/深度长文.md', assetsDir: 'Wechatian/articles/assets', assetCount: 2 }],
+    },
+  ]);
+  assert.deepEqual(lines, ['收到文章, 记录到了: `articles/深度长文.md`']);
 });
 
 test('buildReceiptReplies: import failure', () => {
   applyLanguage('zh');
-  const lines = buildReceiptReplies([{ ok: false, appended: false, dailyNote: '', attachmentPaths: [], attachmentFailures: [], linkCount: 0, articleAssets: [], articleFailures: [] }]);
+  const lines = buildReceiptReplies([{ ok: false, appended: false, dailyNote: '', attachments: [], attachmentFailures: [], linkCount: 0, articleAssets: [], articleFailures: [] }]);
   assert.deepEqual(lines, ['消息已收到,但写入 vault 失败。']);
 });
 
 test('buildReceiptReplies: attachment failures carry the reason', () => {
   applyLanguage('zh');
   const lines = buildReceiptReplies([{ ...RECEIPT_OK, attachmentFailures: ['image_0.bin (http 503)'] }]);
-  assert.deepEqual(lines, ['收到,已完成保存\n附件保存失败: image_0.bin (http 503)']);
+  assert.deepEqual(lines, ['收到消息, 记录到了: `2026-08-27.md`\n附件保存失败: image_0.bin (http 503)']);
 });
 
 test('buildReceiptReplies: article fetch failures carry the reason', () => {
   applyLanguage('zh');
   const lines = buildReceiptReplies([{ ...RECEIPT_OK, linkCount: 1, articleFailures: ['http 503'] }]);
-  assert.deepEqual(lines, ['收到,已完成保存\n文章抓取失败: http 503']);
+  assert.deepEqual(lines, ['收到消息, 记录到了: `2026-08-27.md`\n文章抓取失败: http 503']);
 });
 
 test('buildReceiptReplies: link present but no result at all reports an unknown reason', () => {
   applyLanguage('zh');
   const failed = buildReceiptReplies([{ ...RECEIPT_OK, linkCount: 2 }]);
-  assert.deepEqual(failed, ['收到,已完成保存\n文章抓取失败: unknown']);
+  assert.deepEqual(failed, ['收到消息, 记录到了: `2026-08-27.md`\n文章抓取失败: unknown']);
 });
 
 test('buildReceiptReplies follows the active language', () => {
   applyLanguage('tw');
-  const twLines = buildReceiptReplies([{ ...RECEIPT_OK, attachmentPaths: ['Wechatian/attachments/a.jpg'] }]);
-  assert.deepEqual(twLines, ['收到,已完成儲存']);
+  const twLines = buildReceiptReplies([{ ...RECEIPT_OK, attachments: [{ kind: 'image', path: 'Wechatian/attachments/a.jpg' }] }]);
+  assert.deepEqual(twLines, ['收到圖片, 記錄到了: `attachments/a.jpg`']);
   applyLanguage('en');
   const enLines = buildReceiptReplies([RECEIPT_OK]);
-  assert.deepEqual(enLines, ['Received and saved']);
+  assert.deepEqual(enLines, ['Received message, recorded to: `2026-08-27.md`']);
   applyLanguage('zh');
 });
 
@@ -360,12 +370,13 @@ test('importMessage: attachments saved with vault path in result', async () => {
     { kind: 'file', name: 'report.pdf', mime: 'application/pdf', data },
   ] });
   const r = await importMessage(v.app, new StubTransport(), msg, IMPORT_OPTS);
-  assert.equal(r.attachmentPaths.length, 2);
+  assert.equal(r.attachments.length, 2);
   assert.equal(r.attachmentFailures.length, 0);
-  assert.ok(r.attachmentPaths[0].startsWith('Wechatian/attachments/'));
-  assert.ok(r.attachmentPaths[0].endsWith('photo.jpg'));
-  for (const p of r.attachmentPaths) {
-    assert.ok(v.bins.has(p), `binary stored at ${p}`);
+  assert.ok(r.attachments[0].path.startsWith('Wechatian/attachments/'));
+  assert.ok(r.attachments[0].path.endsWith('photo.jpg'));
+  assert.deepEqual(r.attachments.map((a) => a.kind), ['image', 'file']);
+  for (const a of r.attachments) {
+    assert.ok(v.bins.has(a.path), `binary stored at ${a.path}`);
   }
 });
 
@@ -374,7 +385,7 @@ test('importMessage: attachment failure is recorded, import continues', async ()
   const data = new TextEncoder().encode('bytes');
   v.writeShouldFail = true;
   const r = await importMessage(v.app, new StubTransport(), MSG({ attachments: [{ kind: 'image', name: 'photo.jpg', mime: 'image/jpeg', data }] }), IMPORT_OPTS);
-  assert.equal(r.attachmentPaths.length, 0);
+  assert.equal(r.attachments.length, 0);
   assert.deepEqual(r.attachmentFailures, ['photo.jpg (disk full)']);
 });
 
@@ -388,12 +399,44 @@ test('importMessage: same-second same-name attachments get distinct paths; image
     { kind: 'image', name: 'image_0.bin', mime: 'image/*', data: png },
   ] });
   const r = await importMessage(v.app, new StubTransport(), msg, IMPORT_OPTS);
-  assert.equal(r.attachmentPaths.length, 2);
-  assert.notEqual(r.attachmentPaths[0], r.attachmentPaths[1], 'second copy must not overwrite the first');
-  assert.ok(v.bins.has(r.attachmentPaths[0]) && v.bins.has(r.attachmentPaths[1]));
+  assert.equal(r.attachments.length, 2);
+  assert.notEqual(r.attachments[0].path, r.attachments[1].path, 'second copy must not overwrite the first');
+  assert.ok(v.bins.has(r.attachments[0].path) && v.bins.has(r.attachments[1].path));
   // .bin is resolved by magic bytes: PNG, not the jpg fallback
-  for (const p of r.attachmentPaths) assert.ok(p.endsWith('.png'), `magic-byte ext for ${p}`);
+  for (const a of r.attachments) assert.ok(a.path.endsWith('.png'), `magic-byte ext for ${a.path}`);
 });
+
+test('importMessage: transcoded .wav voice embeds an inline player; raw .silk stays a link', async () => {
+  const v = new FakeVault();
+  // 0.5s of 24kHz sine -> a real SILK payload via the vendored wasm encoder,
+  // then back to WAV: this exercises the inlined silk.wasm end to end in node
+  const rate = 24000;
+  const n = rate / 2;
+  const pcm = new Uint8Array(n * 2);
+  const dv = new DataView(pcm.buffer);
+  for (let i = 0; i < n; i++) dv.setInt16(i * 2, Math.round(Math.sin((i / rate) * 2 * Math.PI * 440) * 12000), true);
+  const enc = await encode(pcm, rate);
+  assert.equal(isSilkView(enc.data), true, 'encoder produced a SILK payload');
+  const wavBytes = await silkToWav(enc.data);
+  assert.ok(wavBytes, 'vendored wasm decodes under node');
+  const msg = MSG({ attachments: [
+    { kind: 'audio', name: 'voice.wav', mime: 'audio/wav', data: wavBytes! },
+    { kind: 'audio', name: 'voice.silk', mime: 'audio/silk', data: new Uint8Array([2, 0, 0, 0]) },
+  ] });
+  const r = await importMessage(v.app, new StubTransport(), msg, IMPORT_OPTS);
+  assert.equal(r.attachments.length, 2);
+  assert.ok(r.attachments[0].path.endsWith('.wav'));
+  assert.ok(r.attachments[1].path.endsWith('.silk'));
+  const note = v.files.get('Wechatian/2026-08-27.md')!;
+  assert.ok(note.includes(`![[${r.attachments[0].path}]]`), '.wav renders as an embedded player');
+  assert.ok(note.includes(`[[${r.attachments[1].path}|voice.silk]]`), '.silk fallback stays a plain link');
+  const stored = v.bins.get(r.attachments[0].path)!;
+  assert.equal(String.fromCharCode(stored[0], stored[1], stored[2], stored[3]), 'RIFF', 'wav header intact in vault');
+});
+
+function isSilkView(u: Uint8Array): boolean {
+  return new TextDecoder().decode(u.slice(0, 7)).includes('#!SILK');
+}
 
 /* ------------------------------------------------------------- outbox */
 

@@ -32,6 +32,7 @@ import type { OutboundAttachment } from '../src/core/types';
 import { Outbox } from '../src/outbox';
 import { StateStore } from '../src/core/store';
 import { applyLanguage } from '../src/i18n';
+import { encode } from '../src/core/silk-decoder';
 
 // Node has no `window`; ilink/store schedule via window.setTimeout
 (globalThis as { window?: unknown }).window = globalThis;
@@ -233,6 +234,117 @@ test('poll: image attachment is downloaded and AES-decrypted', async () => {
   assert.equal(att.kind, 'image');
   assert.equal(Buffer.from(att.data).toString(), 'secret image bytes');
   assert.equal(r.messages[0].text, ''); // media-only message still counts
+});
+
+/** 0.5s of 24kHz sine encoded to a genuine SILK payload via the vendored wasm */
+async function silkFixture(): Promise<Buffer> {
+  const rate = 24000;
+  const n = rate / 2;
+  const pcm = new Uint8Array(n * 2);
+  const dv = new DataView(pcm.buffer);
+  for (let i = 0; i < n; i++) dv.setInt16(i * 2, Math.round(Math.sin((i / rate) * 2 * Math.PI * 440) * 12000), true);
+  const enc = await encode(pcm, rate);
+  return Buffer.from(enc.data);
+}
+
+test('poll: silk voice attachment is transcoded to a playable wav', async () => {
+  const key = Buffer.from('0123456789abcdef');
+  const cipher = encryptEcb(await silkFixture(), key);
+  const tr = new ScriptableTransport()
+    .on(/getupdates/, {
+      body: JSON.stringify({
+        ret: 0,
+        msgs: [
+          {
+            message_type: MSG_TYPE_USER,
+            from_user_id: 'alice',
+            message_id: 9,
+            create_time_ms: 1700000000000,
+            item_list: [
+              {
+                type: ITEM_VOICE,
+                voice_item: { media: { encrypt_query_param: 'enc-param', aes_key: key.toString('base64') } },
+              },
+            ],
+          },
+        ],
+      }),
+    })
+    .on(/cdn\.example\/download/, { body: cipher });
+  const r = await client(tr).poll('');
+  const att = r.messages[0].attachments[0];
+  assert.equal(att.kind, 'audio');
+  assert.ok(att.name.endsWith('.wav'), `transcoded attachment renamed: ${att.name}`);
+  assert.equal(att.mime, 'audio/wav');
+  assert.equal(Buffer.from(att.data.slice(0, 4)).toString(), 'RIFF', 'wav container header');
+  assert.ok(att.data.length > 44, 'decoded samples present');
+});
+
+test('poll: voice with an ASR transcript keeps both the text and the audio', async () => {
+  const key = Buffer.from('0123456789abcdef');
+  const cipher = encryptEcb(await silkFixture(), key);
+  const tr = new ScriptableTransport()
+    .on(/getupdates/, {
+      body: JSON.stringify({
+        ret: 0,
+        msgs: [
+          {
+            message_type: MSG_TYPE_USER,
+            from_user_id: 'alice',
+            message_id: 11,
+            create_time_ms: 1700000000000,
+            item_list: [
+              {
+                type: ITEM_VOICE,
+                voice_item: {
+                  text: 'the gateway transcript',
+                  media: { encrypt_query_param: 'enc-param', aes_key: key.toString('base64') },
+                },
+              },
+            ],
+          },
+        ],
+      }),
+    })
+    .on(/cdn\.example\/download/, { body: cipher });
+  const r = await client(tr).poll('');
+  assert.equal(r.messages[0].text, 'the gateway transcript', 'transcript stays as the note text');
+  const att = r.messages[0].attachments[0];
+  assert.equal(att.kind, 'audio');
+  assert.ok(att.name.endsWith('.wav'), 'audio still downloaded and transcoded');
+});
+
+test('poll: non-silk voice bytes are kept raw instead of failing the import', async () => {
+  const key = Buffer.from('0123456789abcdef');
+  const plain = Buffer.from('#!AMR\nfake-amr-frame');
+  const cipher = encryptEcb(plain, key);
+  const tr = new ScriptableTransport()
+    .on(/getupdates/, {
+      body: JSON.stringify({
+        ret: 0,
+        msgs: [
+          {
+            message_type: MSG_TYPE_USER,
+            from_user_id: 'alice',
+            message_id: 10,
+            create_time_ms: 1700000000000,
+            item_list: [
+              {
+                type: ITEM_VOICE,
+                voice_item: { media: { encrypt_query_param: 'enc-param', aes_key: key.toString('base64') } },
+              },
+            ],
+          },
+        ],
+      }),
+    })
+    .on(/cdn\.example\/download/, { body: cipher });
+  const r = await client(tr).poll('');
+  const att = r.messages[0].attachments[0];
+  assert.equal(att.kind, 'audio');
+  assert.ok(att.name.endsWith('.silk'), 'original name preserved');
+  assert.equal(att.mime, 'audio/silk');
+  assert.equal(Buffer.from(att.data).toString(), plain.toString());
 });
 
 test('poll: failed media download is recorded with a reason, not silently dropped', async () => {

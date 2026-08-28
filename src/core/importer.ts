@@ -20,7 +20,8 @@ export interface ImportResult {
   appended: boolean;
   dailyNote: string; // path of the daily conversation note the entry was appended to
   articleAssets: ArticleAsset[]; // saved article notes with the directory holding their images
-  attachmentPaths: string[]; // vault paths of successfully saved attachments
+  /** saved attachments: media kind + vault path (the receipt names each by kind) */
+  attachments: { kind: 'image' | 'video' | 'audio' | 'file'; path: string }[];
   /** failed attachments as "name (reason)" — CDN download failures and vault write failures alike */
   attachmentFailures: string[];
   linkCount: number; // links found in the message text (regardless of fetching)
@@ -87,7 +88,7 @@ export async function importMessage(
     appended: false,
     dailyNote: '',
     articleAssets: [],
-    attachmentPaths: [],
+    attachments: [],
     attachmentFailures: msg.attachmentFailures.map((f) => `${f.name} (${f.reason})`),
     linkCount: 0,
     articleFailures: [],
@@ -115,47 +116,66 @@ export async function importMessage(
           settings.groupArticlesByAccount && info.account ? `/${sanitizeFileName(info.account)}` : '';
         const notePath = `${settings.articleFolder}${accountDir}/${dayStamp(msg.timeMs)} ${sanitizeFileName(title)}.md`;
         const mediaFolder = `${settings.articleFolder}${accountDir}/assets`;
-        if (!(await app.vault.adapter.exists(notePath))) {
-          await ensureFolder(app, mediaFolder);
-          // store downloaded images next to the other media, then resolve placeholders
-          const base = `${dayStamp(msg.timeMs)}_${timeOfDay(msg.timeMs).replace(':', '')}`;
-          let body = info.markdown;
-          let savedAssets = 0;
-          for (let i = 0; i < info.images.length; i++) {
-            const img = info.images[i];
-            const ph = `![[img:${i}]]`;
-            if (img.data) {
-              const path = await uniquePath(app, `${mediaFolder}/${base}_article${i}.${img.ext}`);
-              try {
-                const ab = img.data.buffer.slice(
-                  img.data.byteOffset,
-                  img.data.byteOffset + img.data.byteLength,
-                ) as ArrayBuffer;
-                await app.vault.adapter.writeBinary(path, ab);
-                savedAssets++;
-                body = body.split(ph).join(`![[${path}]]`);
-                continue;
-              } catch {
-                /* fall through to a remote link */
+        if (await app.vault.adapter.exists(notePath)) {
+          // re-sent link: overwrite with the freshly fetched content instead of
+          // silently skipping. Delete the old note's downloaded images first so
+          // re-imports don't accumulate orphans (remote ![image](url) links are
+          // URLs, not vault files, and stay untouched)
+          try {
+            const old = await app.vault.adapter.read(notePath);
+            for (const m of old.matchAll(/!\[\[([^\]|#]+)\]\]/g)) {
+              if (m[1].startsWith(`${mediaFolder}/`)) {
+                try {
+                  await app.vault.adapter.remove(m[1]);
+                } catch {
+                  /* orphan cleanup is best-effort */
+                }
               }
             }
-            body = body.split(ph).join(`![image](${img.url})`);
+            await app.vault.adapter.remove(notePath);
+          } catch {
+            /* overwrite is best-effort; a leftover note is cosmetic */
           }
-          const note = [
-            `# ${title}`,
-            '',
-            `> **${t('importer.source')}**: ${url}`,
-            `> **${t('importer.imported')}**: ${new Date(msg.timeMs).toLocaleString()}`,
-            `> **${t('importer.from')}**: ${msg.from}`,
-            info.description ? `> **${t('importer.summary')}**: ${info.description}` : '',
-            '',
-            body,
-            '',
-          ].join('\n');
-          await app.vault.create(notePath, note);
-          result.articleAssets.push({ title, note: notePath, assetsDir: mediaFolder, assetCount: savedAssets });
         }
-        display = display.split(url).join(`[[${notePath.replace(/\.md$/, '')}|${title}]]`);
+        await ensureFolder(app, mediaFolder);
+        // store downloaded images next to the other media, then resolve placeholders
+        const base = `${dayStamp(msg.timeMs)}_${timeOfDay(msg.timeMs).replace(':', '')}`;
+        let body = info.markdown;
+        let savedAssets = 0;
+        for (let i = 0; i < info.images.length; i++) {
+          const img = info.images[i];
+          const ph = `![[img:${i}]]`;
+          if (img.data) {
+            const path = await uniquePath(app, `${mediaFolder}/${base}_article${i}.${img.ext}`);
+            try {
+              const ab = img.data.buffer.slice(
+                img.data.byteOffset,
+                img.data.byteOffset + img.data.byteLength,
+              ) as ArrayBuffer;
+              await app.vault.adapter.writeBinary(path, ab);
+              savedAssets++;
+              body = body.split(ph).join(`![[${path}]]`);
+              continue;
+            } catch {
+              /* fall through to a remote link */
+            }
+          }
+          body = body.split(ph).join(`![image](${img.url})`);
+        }
+        const note = [
+          `# ${title}`,
+          '',
+          `> **${t('importer.source')}**: ${url}`,
+          `> **${t('importer.imported')}**: ${new Date(msg.timeMs).toLocaleString()}`,
+          `> **${t('importer.from')}**: ${msg.from}`,
+          info.description ? `> **${t('importer.summary')}**: ${info.description}` : '',
+          '',
+          body,
+          '',
+        ].join('\n');
+        await app.vault.create(notePath, note);
+        result.articleAssets.push({ title, note: notePath, url, assetsDir: mediaFolder, assetCount: savedAssets });
+        display = display.split(url).join(`[[${notePath.replace(/\.md$/, '')}|《${title}》]]`);
       } catch (e) {
         // a failed article note must not break the inbox entry, but the user
         // should learn why (e.g. http 503, no title on the page)
@@ -177,8 +197,13 @@ export async function importMessage(
       // writeBinary needs an ArrayBuffer; slice out the exact region from the Uint8Array view
       const ab = att.data.buffer.slice(att.data.byteOffset, att.data.byteOffset + att.data.byteLength) as ArrayBuffer;
       await app.vault.adapter.writeBinary(path, ab);
-      result.attachmentPaths.push(path);
-      const embed = att.kind === 'image' ? `![[${path}]]` : `[[${path}|${att.name}]]`;
+      result.attachments.push({ kind: att.kind, path });
+      // audio is embedded so transcoded voice messages render as an inline
+      // player (.wav); a .silk fallback has no renderer, so it stays a link
+      const embed =
+        att.kind === 'image' || (att.kind === 'audio' && path.endsWith('.wav'))
+          ? `![[${path}]]`
+          : `[[${path}|${att.name}]]`;
       lines.push('', ...quoteBlock(embed));
     } catch (e) {
       result.attachmentFailures.push(`${att.name} (${String((e as Error)?.message ?? e)})`);

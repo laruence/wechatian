@@ -405,12 +405,15 @@ export default class WechatianPlugin extends Plugin {
 
     if (this.settings.notifyOnMessage) {
       const preview = msg.text.slice(0, 40) || `[${t('notice.attachments', { n: msg.attachments.length })}]`;
-      new Notice(`${t('notice.prefix')} · ${msg.from.split('@')[0]}: ${preview}`);
+      // the bot account ID is noise; a single sender is bound to this bot anyway
+      new Notice(`${t('notice.prefix')}: ${preview}`);
     }
 
-    // immediate feedback while the message is processed (import + receipt):
-    // best-effort, never blocks or throws
-    void this.showTyping(msg.from, tok);
+    // immediate feedback while the message is processed (import + receipt).
+    // Awaited on purpose: the loop cancels typing once handleInbound returns,
+    // so the indicator must be confirmed lit (or failed) before that point —
+    // a fire-and-forget here raced the cancel and left typing stuck on.
+    await this.showTyping(msg.from, tok);
 
     if (this.settings.autoImport) {
       let result: ImportResult | null = null;
@@ -432,13 +435,13 @@ export default class WechatianPlugin extends Plugin {
                 ok: true,
                 appended: result.appended,
                 dailyNote: result.dailyNote,
-                attachmentPaths: result.attachmentPaths,
+                attachments: result.attachments,
                 attachmentFailures: result.attachmentFailures,
                 linkCount: result.linkCount,
                 articleAssets: result.articleAssets,
                 articleFailures: result.articleFailures,
               }
-            : { ok: false, appended: false, dailyNote: '', attachmentPaths: [], attachmentFailures: [], linkCount: 0, articleAssets: [], articleFailures: [] },
+            : { ok: false, appended: false, dailyNote: '', attachments: [], attachmentFailures: [], linkCount: 0, articleAssets: [], articleFailures: [] },
         ];
       }
     }

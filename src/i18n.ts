@@ -95,7 +95,13 @@ const en: Dict = {
   'sendTest.notBound': 'Not logged in yet',
   'sendTest.needFirstMessage': 'No send credential yet — send any message to the bot from WeChat first, then retry',
 
-  'reply.done': 'Received and saved',
+  'reply.recorded': 'Received {{what}}, recorded to: `{{path}}`',
+  'reply.kind.message': 'message',
+  'reply.kind.image': 'image',
+  'reply.kind.video': 'video',
+  'reply.kind.audio': 'voice',
+  'reply.kind.file': 'file',
+  'reply.kind.article': 'article',
   'reply.attachment.failed': 'failed to save attachment',
   'reply.article.failed': 'failed to fetch article',
   'reply.recordFailed': 'Message received, but recording it to the vault failed.',
@@ -204,7 +210,13 @@ const zh: Dict = {
   'sendTest.notBound': '尚未登录',
   'sendTest.needFirstMessage': '还没有发送凭据——请先从微信给机器人发一条消息,再重试',
 
-  'reply.done': '收到,已完成保存',
+  'reply.recorded': '收到{{what}}, 记录到了: `{{path}}`',
+  'reply.kind.message': '消息',
+  'reply.kind.image': '图片',
+  'reply.kind.video': '视频',
+  'reply.kind.audio': '语音',
+  'reply.kind.file': '文件',
+  'reply.kind.article': '文章',
   'reply.attachment.failed': '附件保存失败',
   'reply.article.failed': '文章抓取失败',
   'reply.recordFailed': '消息已收到,但写入 vault 失败。',
@@ -313,7 +325,13 @@ const tw: Dict = {
   'sendTest.notBound': '尚未登入',
   'sendTest.needFirstMessage': '還沒有發送憑證——請先從微信給機器人發一條訊息,再重試',
 
-  'reply.done': '收到,已完成儲存',
+  'reply.recorded': '收到{{what}}, 記錄到了: `{{path}}`',
+  'reply.kind.message': '訊息',
+  'reply.kind.image': '圖片',
+  'reply.kind.video': '影片',
+  'reply.kind.audio': '語音',
+  'reply.kind.file': '檔案',
+  'reply.kind.article': '文章',
   'reply.attachment.failed': '附件儲存失敗',
   'reply.article.failed': '文章抓取失敗',
   'reply.recordFailed': '訊息已收到,但寫入 vault 失敗。',
@@ -403,19 +421,36 @@ export interface ReceiptReplyInput {
   ok: boolean; // whether recording into the vault succeeded at all
   appended: boolean; // whether the daily-note append succeeded
   dailyNote: string; // path of the daily conversation note
-  attachmentPaths: string[]; // saved attachment paths
+  /** saved attachments: media kind + vault path (the receipt names each by kind) */
+  attachments: { kind: 'image' | 'video' | 'audio' | 'file'; path: string }[];
   attachmentFailures: string[]; // failed attachments as "name (reason)"
   linkCount: number; // links found in the message text
   articleAssets: ArticleAsset[]; // saved article notes + where their images went
   articleFailures: string[]; // reasons the article notes could not be created
 }
 
+const KIND_KEY: Record<'image' | 'video' | 'audio' | 'file', string> = {
+  image: 'reply.kind.image',
+  video: 'reply.kind.video',
+  audio: 'reply.kind.audio',
+  file: 'reply.kind.file',
+};
+
+/** The receipt shows vault paths; the Wechatian/ root folder is noise to the user */
+function stripVaultRoot(path: string): string {
+  return path.replace(/^Wechatian\//, '');
+}
+
 /**
  * Assemble the confirmation reply for every message recorded in one polling
  * round. All messages from the same sender go back as ONE WeChat message:
- * one "received and saved" line per recorded message, plus one line per
- * failure with its reason, so the user always sees why something did not
- * land. Pure function so the logic is unit-testable.
+ * one uniform line per recorded item — "Received <kind>, recorded to:
+ * `path`" — attachments named by their media kind, article notes as
+ * "article" and plain text as "message" (pointing at the daily note;
+ * titles/URLs are deliberately not echoed), so the receipt is identical in
+ * shape for every type. Failures get one line each with the reason so the
+ * user always sees why something did not land. Pure function so the logic
+ * is unit-testable.
  */
 export function buildReceiptReplies(results: ReceiptReplyInput[]): string[] {
   const lines: string[] = [];
@@ -424,10 +459,18 @@ export function buildReceiptReplies(results: ReceiptReplyInput[]): string[] {
       lines.push(t('reply.recordFailed'));
       continue;
     }
-    lines.push(t('reply.done'));
+    for (const att of r.attachments) {
+      lines.push(t('reply.recorded', { what: t(KIND_KEY[att.kind]), path: stripVaultRoot(att.path) }));
+    }
+    for (const art of r.articleAssets) {
+      lines.push(t('reply.recorded', { what: t('reply.kind.article'), path: stripVaultRoot(art.note) }));
+    }
+    if (!r.attachments.length && !r.articleAssets.length) {
+      lines.push(t('reply.recorded', { what: t('reply.kind.message'), path: stripVaultRoot(r.dailyNote) }));
+    }
     for (const f of r.attachmentFailures) lines.push(`${t('reply.attachment.failed')}: ${f}`);
     for (const reason of r.articleFailures) lines.push(`${t('reply.article.failed')}: ${reason}`);
-    if (!r.attachmentPaths.length && !r.attachmentFailures.length && r.linkCount && !r.articleAssets.length && !r.articleFailures.length) {
+    if (!r.attachments.length && !r.attachmentFailures.length && r.linkCount && !r.articleAssets.length && !r.articleFailures.length) {
       lines.push(`${t('reply.article.failed')}: unknown`);
     }
   }

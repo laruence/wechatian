@@ -111,9 +111,11 @@ export interface OutboundAttachment {
 
 /** One saved article: the note path plus the directory holding its images */
 export interface ArticleAsset {
-  /** article title — shown as the receipt-table row label */
+  /** article title — the receipt reply's link label */
   title: string;
   note: string;
+  /** original URL — the receipt links the title back to the source */
+  url: string;
   /** folder the article's downloaded images were saved into (no trailing slash) */
   assetsDir: string;
   /** number of images downloaded with the article */

@@ -18,5 +18,8 @@
     "linkedom": "^0.18.13",
     "obsidian": "^1.8.0",
     "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "silk-wasm": "^3.7.1"
   }
 }
