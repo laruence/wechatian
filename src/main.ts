@@ -321,11 +321,14 @@ export default class WechatianPlugin extends Plugin {
 
       backoff = 1000;
       this.setConn('connected');
+      // idle rounds change nothing: update() only when a value actually
+      // differs, otherwise every poll rewrites state.json and iCloud forks a
+      // conflict copy per round on the second device
       store.update((s) => {
-        s.lastError = '';
+        if (s.lastError !== '') s.lastError = '';
       });
 
-      if (result.cursor) {
+      if (result.cursor && result.cursor !== st.cursor) {
         store.update((s) => {
           s.cursor = result.cursor ?? '';
         });

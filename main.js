@@ -648,6 +648,11 @@ var StateStore = class {
   /** index over state.dedup so lookups are O(1) instead of scanning the ring per message */
   dedupSet = /* @__PURE__ */ new Set();
   saveTimer = null;
+  /** last successful serialization; saves are skipped while the content is unchanged.
+   * The poll loop calls saveNow() every round, and on iCloud-synced vaults every
+   * write from two devices can fork a "state 2.json" conflict copy — so idle
+   * rounds must not touch the disk at all. */
+  lastSavedJson = null;
   /** last save error, so a persistent failure is logged once instead of every retry */
   saveError = null;
   emptyState() {
@@ -675,9 +680,18 @@ var StateStore = class {
           const raw = await this.app.vault.adapter.read(path);
           this.state = { ...this.emptyState(), ...JSON.parse(raw) };
           const legacy = this.state;
+          const hadLegacy = "quotaTimes" in legacy || "lastPollAt" in legacy;
           delete legacy.quotaTimes;
           delete legacy.lastPollAt;
           this.dedupSet = new Set(this.state.dedup);
+          const json = JSON.stringify(this.state);
+          this.lastSavedJson = json;
+          if (hadLegacy) {
+            try {
+              await this.app.vault.adapter.write(this.file, json);
+            } catch {
+            }
+          }
           return;
         }
       } catch (e) {
@@ -704,8 +718,11 @@ var StateStore = class {
       this.state.dedup = this.state.dedup.slice(-DEDUP_KEEP);
       this.dedupSet = new Set(this.state.dedup);
     }
+    const json = JSON.stringify(this.state);
+    if (json === this.lastSavedJson) return;
     try {
-      await this.app.vault.adapter.write(this.file, JSON.stringify(this.state));
+      await this.app.vault.adapter.write(this.file, json);
+      this.lastSavedJson = json;
       this.saveError = null;
     } catch (e) {
       const msg = String(e?.message ?? e);
@@ -2683,9 +2700,9 @@ var WechatianPlugin = class extends import_obsidian6.Plugin {
       backoff = 1e3;
       this.setConn("connected");
       store.update((s) => {
-        s.lastError = "";
+        if (s.lastError !== "") s.lastError = "";
       });
-      if (result.cursor) {
+      if (result.cursor && result.cursor !== st.cursor) {
         store.update((s) => {
           s.cursor = result.cursor ?? "";
         });

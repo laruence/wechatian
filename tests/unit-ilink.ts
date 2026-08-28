@@ -498,16 +498,20 @@ test('bodyTextAuto: transparent gunzip', async () => {
 /** Store + fake adapter without the outbox fixtures (the store only needs read/write/exists) */
 function storeFixture() {
   const files = new Map<string, string>();
+  let writes = 0;
   const adapter = {
     exists: async (p: string) => files.has(p),
     read: async (p: string) => {
       if (!files.has(p)) throw new Error(`ENOENT: ${p}`);
       return files.get(p)!;
     },
-    write: async (p: string, c: string) => void files.set(p, c),
+    write: async (p: string, c: string) => {
+      writes++;
+      files.set(p, c);
+    },
   };
   const app = { vault: { adapter } } as unknown as App;
-  return { app, files };
+  return { app, files, writeCount: () => writes };
 }
 
 test('store dedup: seen() deduplicates, trims at the keep limit and keeps trimming consistent', async () => {
@@ -530,4 +534,57 @@ test('store dedup: seen() deduplicates, trims at the keep limit and keeps trimmi
   await store2.init();
   assert.equal(store2.seen('m2004'), true, 'dedup index rebuilt from disk');
   assert.equal(store2.seen('m0'), false);
+});
+
+test('store saveNow: unchanged content is not rewritten (iCloud conflict reduction)', async () => {
+  const { app, writeCount } = storeFixture();
+  const store = new StateStore(app, 'plugin/state.json');
+  store.update((s) => {
+    s.scannedUser = 'user123';
+  });
+  await store.saveNow();
+  assert.equal(writeCount(), 1);
+  // the poll loop calls saveNow() every round; idle rounds must not write
+  await store.saveNow();
+  await store.saveNow();
+  assert.equal(writeCount(), 1, 'unchanged state produces no further disk writes');
+  // a real change writes again
+  store.update((s) => {
+    s.cursor = 'c2';
+  });
+  await store.saveNow();
+  assert.equal(writeCount(), 2);
+});
+
+test('store init: first saveNow after load is a no-op when nothing changed', async () => {
+  const { app, files, writeCount } = storeFixture();
+  const store = new StateStore(app, 'plugin/state.json');
+  store.update((s) => {
+    s.scannedUser = 'user123';
+    s.cursor = 'c1';
+  });
+  await store.saveNow();
+  assert.equal(writeCount(), 1);
+
+  // a fresh instance loads the same content; saveNow must not rewrite the file
+  const store2 = new StateStore(app, 'plugin/state.json');
+  await store2.init();
+  const content = files.get('plugin/state.json')!;
+  await store2.saveNow();
+  assert.equal(writeCount(), 1, 'reload does not force a rewrite');
+  assert.equal(files.get('plugin/state.json'), content);
+});
+
+test('store init: legacy quotaTimes/lastPollAt are dropped and the cleaned state persists', async () => {
+  const { app, files } = storeFixture();
+  // state.json written by an older version carries fields that no longer exist
+  files.set('plugin/state.json', JSON.stringify({ scannedUser: 'u', quotaTimes: [1, 2], lastPollAt: 42, cursor: 'c' }));
+  const store = new StateStore(app, 'plugin/state.json');
+  await store.init();
+  assert.equal(store.get().scannedUser, 'u');
+  assert.equal(store.get().cursor, 'c');
+  await store.saveNow();
+  const saved = JSON.parse(files.get('plugin/state.json')!) as Record<string, unknown>;
+  assert.ok(!('quotaTimes' in saved), 'legacy quotaTimes removed on save');
+  assert.ok(!('lastPollAt' in saved), 'legacy lastPollAt removed on save');
 });

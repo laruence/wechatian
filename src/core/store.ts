@@ -24,6 +24,11 @@ export class StateStore {
   /** index over state.dedup so lookups are O(1) instead of scanning the ring per message */
   private dedupSet = new Set<string>();
   private saveTimer: number | null = null;
+  /** last successful serialization; saves are skipped while the content is unchanged.
+   * The poll loop calls saveNow() every round, and on iCloud-synced vaults every
+   * write from two devices can fork a "state 2.json" conflict copy — so idle
+   * rounds must not touch the disk at all. */
+  private lastSavedJson: string | null = null;
   /** last save error, so a persistent failure is logged once instead of every retry */
   private saveError: string | null = null;
 
@@ -64,9 +69,21 @@ export class StateStore {
           this.state = { ...this.emptyState(), ...(JSON.parse(raw) as Partial<BotState>) };
           // drop fields that older versions persisted but nothing reads anymore
           const legacy = this.state as unknown as Record<string, unknown>;
+          const hadLegacy = 'quotaTimes' in legacy || 'lastPollAt' in legacy;
           delete legacy.quotaTimes;
           delete legacy.lastPollAt;
           this.dedupSet = new Set(this.state.dedup);
+          const json = JSON.stringify(this.state);
+          // remember the clean serialization so an unchanged first saveNow() is a no-op
+          this.lastSavedJson = json;
+          if (hadLegacy) {
+            // one-time cleanup write so the dropped fields don't linger on disk forever
+            try {
+              await this.app.vault.adapter.write(this.file, json);
+            } catch {
+              /* cosmetic: the fields are gone from memory either way */
+            }
+          }
           return; // a legacy state.json is read as-is; the next save writes it to the new location
         }
       } catch (e) {
@@ -99,8 +116,11 @@ export class StateStore {
       this.state.dedup = this.state.dedup.slice(-DEDUP_KEEP);
       this.dedupSet = new Set(this.state.dedup); // keep the index in sync with the trimmed array
     }
+    const json = JSON.stringify(this.state);
+    if (json === this.lastSavedJson) return; // nothing changed: no disk write, no iCloud conflict
     try {
-      await this.app.vault.adapter.write(this.file, JSON.stringify(this.state));
+      await this.app.vault.adapter.write(this.file, json);
+      this.lastSavedJson = json;
       this.saveError = null;
     } catch (e) {
       // Never swallow this silently again: a failed write means the binding is
