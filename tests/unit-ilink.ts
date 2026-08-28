@@ -295,6 +295,43 @@ test('poll: oversized inbound media is rejected without being saved', async () =
   assert.ok(r.messages[0].attachmentFailures[0].reason.includes('too large'));
 });
 
+/* -------------------------------------------------------------- typing */
+
+test('typing: getConfig -> sendtyping(status=1) -> sendtyping(status=2)', async () => {
+  const tr = new ScriptableTransport()
+    .on(/getconfig/, { body: JSON.stringify({ typing_ticket: 'tk-123' }) })
+    .on(/sendtyping/, { body: JSON.stringify({}) });
+  const c = client(tr);
+  const cfg = await c.getConfig('alice', 'ctx');
+  assert.equal(cfg.typingTicket, 'tk-123');
+  assert.equal(await c.sendTyping('alice', cfg.typingTicket, true), true);
+  assert.equal(await c.sendTyping('alice', cfg.typingTicket, false), true);
+
+  const cfgReq = tr.requests.find((r) => r.url.includes('getconfig'))!;
+  const cfgBody = jsonBody(cfgReq) as { ilink_user_id?: string; context_token?: string };
+  assert.equal(cfgBody.ilink_user_id, 'alice');
+  assert.equal(cfgBody.context_token, 'ctx');
+  const typings = tr.requests.filter((r) => r.url.includes('sendtyping'));
+  assert.equal(typings.length, 2);
+  assert.equal((jsonBody(typings[0]) as { status?: number }).status, 1);
+  assert.equal((jsonBody(typings[1]) as { status?: number }).status, 2);
+  for (const r of typings) {
+    assert.equal((jsonBody(r) as { typing_ticket?: string }).typing_ticket, 'tk-123');
+  }
+});
+
+test('typing: failures degrade silently (no ticket -> no call; gateway error -> false)', async () => {
+  const tr = new ScriptableTransport().on(/getconfig/, { status: 503, body: 'down' });
+  const c = client(tr);
+  const cfg = await c.getConfig('alice', 'ctx');
+  assert.equal(cfg.typingTicket, '', 'getconfig failure yields no ticket, not a throw');
+  assert.equal(await c.sendTyping('alice', '', true), false, 'empty ticket is a local no-op');
+  assert.equal(tr.requests.filter((r) => r.url.includes('sendtyping')).length, 0);
+
+  const tr2 = new ScriptableTransport().on(/sendtyping/, { status: 500, body: 'oops' });
+  assert.equal(await client(tr2).sendTyping('alice', 'tk', true), false, 'gateway error reported as false');
+});
+
 /* -------------------------------------------------------------- sendText */
 
 test('sendText: chunked into multiple gateway calls', async () => {
@@ -587,4 +624,14 @@ test('store init: legacy quotaTimes/lastPollAt are dropped and the cleaned state
   const saved = JSON.parse(files.get('plugin/state.json')!) as Record<string, unknown>;
   assert.ok(!('quotaTimes' in saved), 'legacy quotaTimes removed on save');
   assert.ok(!('lastPollAt' in saved), 'legacy lastPollAt removed on save');
+});
+
+test('store: fresh state carries an empty typingTickets cache', async () => {
+  const { app } = storeFixture();
+  const store = new StateStore(app, 'plugin/state.json');
+  assert.deepEqual(store.get().typingTickets, {});
+  store.update((s) => {
+    s.typingTickets['alice'] = { ticket: 'tk', at: 1000 };
+  });
+  assert.equal(store.get().typingTickets['alice'].ticket, 'tk');
 });

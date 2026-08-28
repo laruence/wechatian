@@ -19,6 +19,9 @@ import { applyLanguage, buildReceiptReplies, buildSendFailure, resolvedLanguage,
  * failed on fresh installs) */
 const LEGACY_STATE_FILE = '.wechatian-plugin/state.json';
 
+/** typing tickets stay valid ~24h (the official SDK caches them a day); refetch after that */
+const TICKET_TTL_MS = 24 * 3600_000;
+
 type ConnState = 'disconnected' | 'connecting' | 'connected' | 'expired' | 'error';
 
 export default class WechatianPlugin extends Plugin {
@@ -239,6 +242,8 @@ export default class WechatianPlugin extends Plugin {
   }
 
   disconnect(): void {
+    // best-effort: don't leave the "typing" indicator lit after disconnect
+    this.stopAllTyping().catch(() => {});
     this.stopRequested = true;
     this.polling = false;
     this.client = null;
@@ -285,6 +290,8 @@ export default class WechatianPlugin extends Plugin {
     this.setConn('connecting');
 
     let backoff = 1000;
+    // user we currently show "typing" for; cleared once the round finishes processing
+    let typingFor = '';
     while (this.polling && !this.stopRequested) {
       const store = this.store;
       if (!store) break;
@@ -337,6 +344,14 @@ export default class WechatianPlugin extends Plugin {
       const receipts: ReceiptReplyInput[] = [];
       for (const msg of result.messages) {
         receipts.push(...(await this.handleInbound(msg)));
+        typingFor = msg.from; // showTyping fired in handleInbound; remember who
+      }
+      // processing finished: hide "typing" before any outbound send (even when
+      // no receipt goes out), best-effort
+      if (typingFor) {
+        const tFor = typingFor;
+        typingFor = '';
+        await this.stopTypingFor(tFor);
       }
       // one batched receipt reply per polling round, not one per message
       if (receipts.length) {
@@ -387,6 +402,10 @@ export default class WechatianPlugin extends Plugin {
       const preview = msg.text.slice(0, 40) || `[${t('notice.attachments', { n: msg.attachments.length })}]`;
       new Notice(`${t('notice.prefix')} · ${msg.from.split('@')[0]}: ${preview}`);
     }
+
+    // immediate feedback while the message is processed (import + receipt):
+    // best-effort, never blocks or throws
+    void this.showTyping(msg.from, tok);
 
     if (this.settings.autoImport) {
       let result: ImportResult | null = null;
@@ -449,6 +468,65 @@ export default class WechatianPlugin extends Plugin {
       }
     } catch {
       /* receipt replies are best-effort: a failure must not disturb receiving */
+    }
+  }
+
+  /* ------------------------------------------------------------- typing */
+
+  /** Show the "typing" indicator while a message is being processed.
+   * Fully best-effort: any failure (missing ticket, network error) is swallowed. */
+  private async showTyping(userId: string, contextToken: string): Promise<void> {
+    try {
+      const client = this.client ?? this.makeClient();
+      const cached = this.store.get().typingTickets[userId];
+      let ticket = cached && Date.now() - cached.at < TICKET_TTL_MS ? cached.ticket : '';
+      if (!ticket) {
+        const cfg = await client.getConfig(userId, contextToken);
+        if (!cfg.typingTicket) return;
+        ticket = cfg.typingTicket;
+        this.store.update((s) => {
+          s.typingTickets[userId] = { ticket, at: Date.now() };
+        });
+      }
+      if (!(await client.sendTyping(userId, ticket, true))) {
+        // stale/invalid ticket: refetch once and retry
+        this.store.update((s) => {
+          delete s.typingTickets[userId];
+        });
+        const cfg = await client.getConfig(userId, contextToken);
+        if (!cfg.typingTicket) return;
+        this.store.update((s) => {
+          s.typingTickets[userId] = { ticket: cfg.typingTicket, at: Date.now() };
+        });
+        await client.sendTyping(userId, cfg.typingTicket, true);
+      }
+    } catch {
+      /* typing is cosmetic; never disturb the receive flow */
+    }
+  }
+
+  /** Cancel the "typing" indicator for one user (best-effort) */
+  private async stopTypingFor(userId: string): Promise<void> {
+    try {
+      const cached = this.store.get().typingTickets[userId];
+      if (!cached) return;
+      const client = this.client ?? this.makeClient();
+      await client.sendTyping(userId, cached.ticket, false);
+    } catch {
+      /* best-effort */
+    }
+  }
+
+  /** Cancel typing for all cached tickets (used on disconnect; best-effort) */
+  private async stopAllTyping(): Promise<void> {
+    try {
+      const st = this.store.get();
+      const users = Object.keys(st.typingTickets);
+      if (!users.length) return;
+      const client = this.client ?? this.makeClient();
+      await Promise.all(users.map((u) => client.sendTyping(u, st.typingTickets[u].ticket, false)));
+    } catch {
+      /* best-effort */
     }
   }
 

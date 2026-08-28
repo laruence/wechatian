@@ -318,6 +318,39 @@ var IlinkClient = class {
       return { ok: false, ret: -1, errcode: 0, errmsg: String(e?.message ?? e) };
     }
   }
+  /** Fetch per-user bot config; typing_ticket is the credential sendtyping needs (TTL handled by the caller) */
+  async getConfig(ilinkUserId, contextToken) {
+    try {
+      const resp = await this.post(
+        "ilink/bot/getconfig",
+        { ilink_user_id: ilinkUserId, context_token: contextToken, base_info: { channel_version: this.channelVersion } },
+        1e4
+      );
+      return { typingTicket: (resp.typing_ticket ?? "").trim() };
+    } catch {
+      return { typingTicket: "" };
+    }
+  }
+  /** Show/cancel the "typing" indicator in the user's chat. Best-effort: returns false on any failure */
+  async sendTyping(ilinkUserId, typingTicket, active) {
+    if (!typingTicket.trim()) return false;
+    try {
+      await this.post(
+        "ilink/bot/sendtyping",
+        {
+          ilink_user_id: ilinkUserId,
+          typing_ticket: typingTicket,
+          status: active ? 1 : 2,
+          // 1 = typing, 2 = cancel
+          base_info: { channel_version: this.channelVersion }
+        },
+        1e4
+      );
+      return true;
+    } catch {
+      return false;
+    }
+  }
   /** Send one media/file attachment: AES-ECB encrypt -> getuploadurl -> CDN upload -> sendmessage */
   async sendMedia(to, att, contextToken) {
     try {
@@ -665,6 +698,7 @@ var StateStore = class {
       contextTokens: {},
       pausedUntil: 0,
       dedup: [],
+      typingTickets: {},
       lastError: ""
     };
   }
@@ -2439,6 +2473,7 @@ var CDN_BASE = "https://novac2c.cdn.weixin.qq.com/c2c";
 
 // src/main.ts
 var LEGACY_STATE_FILE = ".wechatian-plugin/state.json";
+var TICKET_TTL_MS = 24 * 36e5;
 var WechatianPlugin = class extends import_obsidian6.Plugin {
   settings = DEFAULT_SETTINGS;
   store;
@@ -2626,6 +2661,8 @@ var WechatianPlugin = class extends import_obsidian6.Plugin {
     if (!this.polling) await this.startPollLoop();
   }
   disconnect() {
+    this.stopAllTyping().catch(() => {
+    });
     this.stopRequested = true;
     this.polling = false;
     this.client = null;
@@ -2668,6 +2705,7 @@ var WechatianPlugin = class extends import_obsidian6.Plugin {
     this.client = this.makeClient();
     this.setConn("connecting");
     let backoff = 1e3;
+    let typingFor = "";
     while (this.polling && !this.stopRequested) {
       const store = this.store;
       if (!store) break;
@@ -2710,6 +2748,12 @@ var WechatianPlugin = class extends import_obsidian6.Plugin {
       const receipts = [];
       for (const msg of result.messages) {
         receipts.push(...await this.handleInbound(msg));
+        typingFor = msg.from;
+      }
+      if (typingFor) {
+        const tFor = typingFor;
+        typingFor = "";
+        await this.stopTypingFor(tFor);
       }
       if (receipts.length) {
         await this.sendReceiptReplies(receipts);
@@ -2746,6 +2790,7 @@ var WechatianPlugin = class extends import_obsidian6.Plugin {
       const preview = msg.text.slice(0, 40) || `[${t("notice.attachments", { n: msg.attachments.length })}]`;
       new import_obsidian6.Notice(`${t("notice.prefix")} \xB7 ${msg.from.split("@")[0]}: ${preview}`);
     }
+    void this.showTyping(msg.from, tok);
     if (this.settings.autoImport) {
       let result = null;
       try {
@@ -2800,6 +2845,57 @@ var WechatianPlugin = class extends import_obsidian6.Plugin {
       } else if (this.settings.notifyOnMessage) {
         new import_obsidian6.Notice(t("sendTest.failed", { err: buildSendFailure(res.errmsg, res.ret, contextToken) }), 1e4);
       }
+    } catch {
+    }
+  }
+  /* ------------------------------------------------------------- typing */
+  /** Show the "typing" indicator while a message is being processed.
+   * Fully best-effort: any failure (missing ticket, network error) is swallowed. */
+  async showTyping(userId, contextToken) {
+    try {
+      const client = this.client ?? this.makeClient();
+      const cached = this.store.get().typingTickets[userId];
+      let ticket = cached && Date.now() - cached.at < TICKET_TTL_MS ? cached.ticket : "";
+      if (!ticket) {
+        const cfg = await client.getConfig(userId, contextToken);
+        if (!cfg.typingTicket) return;
+        ticket = cfg.typingTicket;
+        this.store.update((s) => {
+          s.typingTickets[userId] = { ticket, at: Date.now() };
+        });
+      }
+      if (!await client.sendTyping(userId, ticket, true)) {
+        this.store.update((s) => {
+          delete s.typingTickets[userId];
+        });
+        const cfg = await client.getConfig(userId, contextToken);
+        if (!cfg.typingTicket) return;
+        this.store.update((s) => {
+          s.typingTickets[userId] = { ticket: cfg.typingTicket, at: Date.now() };
+        });
+        await client.sendTyping(userId, cfg.typingTicket, true);
+      }
+    } catch {
+    }
+  }
+  /** Cancel the "typing" indicator for one user (best-effort) */
+  async stopTypingFor(userId) {
+    try {
+      const cached = this.store.get().typingTickets[userId];
+      if (!cached) return;
+      const client = this.client ?? this.makeClient();
+      await client.sendTyping(userId, cached.ticket, false);
+    } catch {
+    }
+  }
+  /** Cancel typing for all cached tickets (used on disconnect; best-effort) */
+  async stopAllTyping() {
+    try {
+      const st = this.store.get();
+      const users = Object.keys(st.typingTickets);
+      if (!users.length) return;
+      const client = this.client ?? this.makeClient();
+      await Promise.all(users.map((u) => client.sendTyping(u, st.typingTickets[u].ticket, false)));
     } catch {
     }
   }

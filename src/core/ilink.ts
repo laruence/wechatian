@@ -271,6 +271,40 @@ export class IlinkClient {
     }
   }
 
+  /** Fetch per-user bot config; typing_ticket is the credential sendtyping needs (TTL handled by the caller) */
+  async getConfig(ilinkUserId: string, contextToken: string): Promise<{ typingTicket: string }> {
+    try {
+      const resp = await this.post<{ typing_ticket?: string }>(
+        'ilink/bot/getconfig',
+        { ilink_user_id: ilinkUserId, context_token: contextToken, base_info: { channel_version: this.channelVersion } },
+        10_000,
+      );
+      return { typingTicket: (resp.typing_ticket ?? '').trim() };
+    } catch {
+      return { typingTicket: '' };
+    }
+  }
+
+  /** Show/cancel the "typing" indicator in the user's chat. Best-effort: returns false on any failure */
+  async sendTyping(ilinkUserId: string, typingTicket: string, active: boolean): Promise<boolean> {
+    if (!typingTicket.trim()) return false;
+    try {
+      await this.post<Record<string, unknown>>(
+        'ilink/bot/sendtyping',
+        {
+          ilink_user_id: ilinkUserId,
+          typing_ticket: typingTicket,
+          status: active ? 1 : 2, // 1 = typing, 2 = cancel
+          base_info: { channel_version: this.channelVersion },
+        },
+        10_000,
+      );
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   /** Send one media/file attachment: AES-ECB encrypt -> getuploadurl -> CDN upload -> sendmessage */
   async sendMedia(to: string, att: OutboundAttachment, contextToken: string): Promise<SendResult> {
     try {

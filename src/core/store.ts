@@ -10,6 +10,8 @@ export interface BotState {
   contextTokens: Record<string, string>;
   pausedUntil: number; // pause deadline after session expiry
   dedup: string[]; // recent-message dedup ring
+  /** typing_ticket per ilink_user_id, with the time it was fetched (valid ~24h) */
+  typingTickets: Record<string, { ticket: string; at: number }>;
   lastError: string;
 }
 
@@ -51,6 +53,7 @@ export class StateStore {
       contextTokens: {},
       pausedUntil: 0,
       dedup: [],
+      typingTickets: {},
       lastError: '',
     };
   }
