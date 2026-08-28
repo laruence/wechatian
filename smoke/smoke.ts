@@ -12,6 +12,12 @@ import type { OutboundAttachment } from '../src/core/types';
 const BASE = 'https://ilinkai.weixin.qq.com';
 const CDN = 'https://novac2c.cdn.weixin.qq.com/c2c';
 
+// Node has no `window`: alias it so `window.setTimeout` (Obsidian's popout-timer
+// convention, used by core sleep) also works in this CLI.
+if (typeof window === 'undefined') {
+  (globalThis as { window?: unknown }).window = globalThis;
+}
+
 class FetchTransport implements HttpTransport {
   private async run(
     method: 'GET' | 'POST',
@@ -20,19 +26,14 @@ class FetchTransport implements HttpTransport {
     body: string | ArrayBuffer | undefined,
     timeoutMs: number,
   ): Promise<HttpResponse> {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-      const resp = await fetch(url, { method, headers, body, signal: controller.signal });
-      const buf = await resp.arrayBuffer();
-      const hdrs: Record<string, string> = {};
-      resp.headers.forEach((v, k) => {
-        hdrs[k] = v;
-      });
-      return { status: resp.status, body: buf, headers: lowerHeaders(hdrs) };
-    } finally {
-      clearTimeout(timer);
-    }
+    // AbortSignal.timeout: no manual timer needed (Node 17.3+)
+    const resp = await fetch(url, { method, headers, body, signal: AbortSignal.timeout(timeoutMs) });
+    const buf = await resp.arrayBuffer();
+    const hdrs: Record<string, string> = {};
+    resp.headers.forEach((v, k) => {
+      hdrs[k] = v;
+    });
+    return { status: resp.status, body: buf, headers: lowerHeaders(hdrs) };
   }
 
   get(url: string, headers: Record<string, string>, timeoutMs: number): Promise<HttpResponse> {
@@ -87,7 +88,7 @@ async function main(): Promise<void> {
       }
       if (res.error) {
         console.error('error:', res.error);
-        await new Promise((r) => setTimeout(r, 2000));
+        await new Promise((r) => window.setTimeout(r, 2000));
         continue;
       }
       if (res.cursor) cursor = res.cursor;
