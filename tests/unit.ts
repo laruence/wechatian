@@ -11,7 +11,7 @@ import { lowerHeaders } from '../src/core/http';
 import { parseAesKey, encryptEcb, decryptEcb, encryptEcbInto, downloadUrl, detectImageExt, md5Hex, ecbPaddedSize } from '../src/core/crypto';
 import { extractLinks } from '../src/core/article';
 import { importMessage, sanitizeFileName, dayStamp, timeOfDay, quoteBlock, ensureFolder } from '../src/core/importer';
-import { encode, silkToWav } from '../src/core/silk-decoder';
+import { encode, silkToWav } from '../src/core/silk';
 import type { InboundMessage } from '../src/core/types';
 import {
   applyLanguage,

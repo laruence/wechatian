@@ -6,7 +6,7 @@
 import type { HttpTransport } from './http';
 import { bodyJson, bodyText, HttpError } from './http';
 import { downloadUrl, parseAesKey, decryptEcb, encryptEcbInto, md5Hex, ecbPaddedSize } from './crypto';
-import { isSilk, silkToWav } from './silk-decoder';
+import { isSilk, silkToWav } from './silk';
 import {
   type AttachmentFailure,
   type GetUpdatesResult,

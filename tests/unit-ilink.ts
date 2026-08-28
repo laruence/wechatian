@@ -32,7 +32,7 @@ import type { OutboundAttachment } from '../src/core/types';
 import { Outbox } from '../src/outbox';
 import { StateStore } from '../src/core/store';
 import { applyLanguage } from '../src/i18n';
-import { encode } from '../src/core/silk-decoder';
+import { encode } from '../src/core/silk';
 
 // Node has no `window`; ilink/store schedule via window.setTimeout
 (globalThis as { window?: unknown }).window = globalThis;
