@@ -450,6 +450,12 @@ test('outbox: failure keeps the file with a categorized hint', async () => {
   assert.ok(content.includes('Wechatian send failed:'), 'agent-readable failure marker preserved');
   assert.ok(content.includes('发送被拒'), 'categorized reason present');
   assert.ok(content.includes('稍等几分钟'), 'fix hint present');
+
+  // retry rounds must not rewrite the file: with the gateway down, rewriting
+  // every flush would churn the file (and fork iCloud conflict copies) forever
+  const flush2 = await flush();
+  assert.equal(flush2, 0);
+  assert.equal(v.files.get('Wechatian/outbox/hello.md'), content, 'second flush leaves the file byte-identical');
 });
 
 test('outbox: unknown extension is left alone', async () => {

@@ -78,10 +78,14 @@ export class Outbox {
       await this.app.vault.adapter.remove(path);
       return 1;
     }
-    // Failure: append a categorized reason + fix hint; the file will be retried next flush
-    // (when rate-limited, keeping the file avoids hammering the gateway)
-    const note = `\n\n<!-- Wechatian send failed: ${buildSendFailure(res.errmsg, res.ret, contextToken)} -->\n`;
-    await this.app.vault.adapter.write(path, content + note);
+    // Failure: annotate once so the agent sees a categorized reason + fix hint.
+    // The file stays for the next flush — but retry rounds must NOT rewrite it:
+    // with the gateway down, rewriting every 30-60s would churn the file
+    // (and fork iCloud conflict copies) forever.
+    if (!content.includes('<!-- Wechatian send failed:')) {
+      const note = `\n\n<!-- Wechatian send failed: ${buildSendFailure(res.errmsg, res.ret, contextToken)} -->\n`;
+      await this.app.vault.adapter.write(path, content + note);
+    }
     return 0;
   }
 
@@ -132,8 +136,9 @@ export class Outbox {
     const notePath = `${path}.wechatian-failed.md`;
     const note = `# ${name}\n\n${buildSendFailure(res.errmsg, res.ret, contextToken)}\n`;
     try {
-      // overwrite, not append: the same file is retried every flush, and a
-      // growing stack of identical failure notes would only bury the vault
+      // overwrite (not append), and the content is deterministic: once the
+      // failure is recorded, every later flush writes byte-identical content,
+      // which saveNow-style churn guards can treat as unchanged
       await this.app.vault.adapter.write(notePath, note);
     } catch {
       /* a missing sidecar is cosmetic; the file itself still survives for retry */

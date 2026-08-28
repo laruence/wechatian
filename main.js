@@ -2385,11 +2385,13 @@ var Outbox = class {
       await this.app.vault.adapter.remove(path);
       return 1;
     }
-    const note = `
+    if (!content.includes("<!-- Wechatian send failed:")) {
+      const note = `
 
 <!-- Wechatian send failed: ${buildSendFailure(res.errmsg, res.ret, contextToken)} -->
 `;
-    await this.app.vault.adapter.write(path, content + note);
+      await this.app.vault.adapter.write(path, content + note);
+    }
     return 0;
   }
   /** image/video/file -> AES-ECB encrypt, upload to CDN, send as a media message */
@@ -2718,8 +2720,10 @@ var WechatianPlugin = class extends import_obsidian6.Plugin {
       const result = await this.client.poll(st.cursor);
       if (result.sessionExpired) {
         store.update((s) => {
-          s.pausedUntil = Date.now() + 36e5;
-          s.lastError = t("error.sessionExpired");
+          if (s.pausedUntil <= Date.now()) {
+            s.pausedUntil = Date.now() + 36e5;
+            s.lastError = t("error.sessionExpired");
+          }
         });
         this.setConn("expired");
         new import_obsidian6.Notice(t("notice.sessionExpired"));

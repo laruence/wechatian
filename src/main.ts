@@ -306,9 +306,14 @@ export default class WechatianPlugin extends Plugin {
       const result: PollResult = await this.client.poll(st.cursor);
 
       if (result.sessionExpired) {
+        // state changes once, on the transition: without the guard every
+        // poll until the pause kicks in would bump pausedUntil and rewrite
+        // state.json pointlessly
         store.update((s) => {
-          s.pausedUntil = Date.now() + 3600_000;
-          s.lastError = t('error.sessionExpired');
+          if (s.pausedUntil <= Date.now()) {
+            s.pausedUntil = Date.now() + 3600_000;
+            s.lastError = t('error.sessionExpired');
+          }
         });
         this.setConn('expired');
         new Notice(t('notice.sessionExpired'));
