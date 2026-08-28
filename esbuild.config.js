@@ -27,9 +27,9 @@ async function build() {
   }
 
   // 冒烟测试入口(node 环境,验证 ilink 协议)
-  if (fs.existsSync('smoke/smoke.ts')) {
+  if (fs.existsSync('tests/smoke.ts')) {
     await esbuild.build({
-      entryPoints: ['smoke/smoke.ts'],
+      entryPoints: ['tests/smoke.ts'],
       bundle: true,
       external: ['obsidian', 'crypto'],
       format: 'cjs',

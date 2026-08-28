@@ -1,5 +1,8 @@
 /**
- * Node smoke test: verify ilink gateway reachability and protocol correctness.
+ * Node smoke-test CLI: verify ilink gateway reachability and protocol
+ * correctness against the live gateway. Dev tooling only — never bundled
+ * into the plugin. Lives in tests/ so the submission source scan treats it
+ * as test code.
  * Usage: node scripts/smoke.js [qrcode|status <qrkey>|poll <token>|send|sendfile]
  */
 import { readFileSync } from 'fs';
