@@ -1,5 +1,5 @@
 /** Wechatian main plugin: WeChat message bridge */
-import { Notice, Plugin, TFile } from 'obsidian';
+import { normalizePath, Notice, Plugin, TFile } from 'obsidian';
 import { IlinkClient, type PollResult, sleep } from './core/ilink';
 import type { InboundMessage } from './core/types';
 import { ObsidianTransport } from './core/transport-obsidian';
@@ -8,7 +8,7 @@ import { StateStore, type BotState } from './core/store';
 import { appendOutbound, ensureFolder, importMessage, quoteBlock, timeOfDay, type ImportResult } from './core/importer';
 import { ensureAgentGuide } from './core/agent-guide';
 import type { LoginOutcome } from './core/qrlogin';
-import { DEFAULT_SETTINGS, WechatianSettings, WechatianSettingTab } from './settings';
+import { DEFAULT_SETTINGS, FOLDER_KEYS, WechatianSettings, WechatianSettingTab } from './settings';
 import { QrLoginModal } from './qr-modal';
 import { Outbox } from './outbox';
 import { CDN_BASE, ILINK_DEFAULT_BASE } from './core/constants';
@@ -37,7 +37,6 @@ export default class WechatianPlugin extends Plugin {
   private connState: ConnState = 'disconnected';
   private statusBar: HTMLElement | null = null;
   private outbox: Outbox | null = null;
-  private statusListeners = new Set<() => void>();
   /** command id -> i18n key, so names can be re-rendered when the language changes */
   private commandNameKeys: Record<string, string> = {};
 
@@ -90,6 +89,10 @@ export default class WechatianPlugin extends Plugin {
       delete raw.sentFolder; // legacy field: sent copies now live in the daily conversation note
     }
     this.settings = Object.assign({}, DEFAULT_SETTINGS, raw ?? {});
+    // user-typed folder paths: scrub them once on load (normalizePath)
+    for (const key of FOLDER_KEYS) {
+      this.settings[key] = normalizePath(this.settings[key]);
+    }
   }
 
   async saveSettings(): Promise<void> {
@@ -144,21 +147,6 @@ export default class WechatianPlugin extends Plugin {
   private setConn(s: ConnState): void {
     this.connState = s;
     this.renderStatus();
-    for (const fn of this.statusListeners) {
-      try {
-        fn();
-      } catch {
-        /* listener errors must not break the main flow */
-      }
-    }
-  }
-
-  /** Subscribe to connection-state changes (used by the settings page) */
-  onStatusChange(fn: () => void): () => void {
-    this.statusListeners.add(fn);
-    return () => {
-      this.statusListeners.delete(fn);
-    };
   }
 
   /** Current connection state */

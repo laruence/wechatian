@@ -1,6 +1,6 @@
 /** Plugin settings: declarative definitions (1.13+) with an imperative login section */
 import type { App } from 'obsidian';
-import { Notice, PluginSettingTab, Setting, type SettingDefinitionItem, type TextComponent } from 'obsidian';
+import { Notice, normalizePath, PluginSettingTab, Setting, type SettingDefinitionItem, type TextComponent } from 'obsidian';
 import type WechatianPlugin from './main';
 import { loginLoop } from './core/qrlogin';
 import { encodeQr } from './core/qrcode';
@@ -34,7 +34,7 @@ export const DEFAULT_SETTINGS: WechatianSettings = {
   autoReply: true,
 };
 
-const FOLDER_KEYS = ['inboxFolder', 'attachmentFolder', 'articleFolder', 'outboxFolder'];
+export const FOLDER_KEYS = ['inboxFolder', 'attachmentFolder', 'articleFolder', 'outboxFolder'] as const satisfies readonly (keyof WechatianSettings)[];
 
 export class WechatianSettingTab extends PluginSettingTab {
   /** Liveness flag for the settings pane: aborts QR polling when switched away/closed */
@@ -56,12 +56,13 @@ export class WechatianSettingTab extends PluginSettingTab {
   }
 
   setControlValue(key: string, value: unknown): void {
+    if ((FOLDER_KEYS as readonly string[]).includes(key) && typeof value === 'string') value = normalizePath(value);
     (this.plugin.settings as unknown as Record<string, unknown>)[key] = value;
     if (key === 'language') {
       this.plugin.applyLanguage(value as WechatianSettings['language']); // switch commands/status bar immediately
       this.update(); // re-render every label in the new language
     }
-    if (FOLDER_KEYS.includes(key)) this.plugin.refreshAgentGuide(); // paths changed -> Agent.md must point at the new folders
+    if ((FOLDER_KEYS as readonly string[]).includes(key)) this.plugin.refreshAgentGuide(); // paths changed -> Agent.md must point at the new folders
     void this.plugin.saveSettings();
   }
 
