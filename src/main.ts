@@ -323,7 +323,6 @@ export default class WechatianPlugin extends Plugin {
       this.setConn('connected');
       store.update((s) => {
         s.lastError = '';
-        s.lastPollAt = Date.now();
       });
 
       if (result.cursor) {

@@ -102,6 +102,13 @@ function encryptEcbInto(plain, key, out) {
 function downloadUrl(cdnBase, encParam) {
   return `${cdnBase.replace(/\/$/, "")}/download?encrypted_query_param=${encodeURIComponent(encParam)}`;
 }
+function detectImageExt(b) {
+  if (b.length >= 3 && b[0] === 255 && b[1] === 216 && b[2] === 255) return "jpg";
+  if (b.length >= 8 && Buffer.from(b.slice(0, 8)).toString("binary") === "\x89PNG\r\n\n") return "png";
+  if (b.length >= 6 && ["GIF87a", "GIF89a"].includes(Buffer.from(b.slice(0, 6)).toString("ascii"))) return "gif";
+  if (b.length >= 12 && Buffer.from(b.slice(0, 4)).toString("ascii") === "RIFF" && Buffer.from(b.slice(8, 12)).toString("ascii") === "WEBP") return "webp";
+  return "jpg";
+}
 function md5Hex(b) {
   return (0, import_crypto.createHash)("md5").update(b).digest("hex");
 }
@@ -189,7 +196,7 @@ var IlinkClient = class {
     if (!from) return null;
     const items = m.item_list ?? [];
     const text = extractText(items);
-    const { attachments, failures: attachmentFailures } = await this.collectMedia(items);
+    const { attachments, failures: attachmentFailures } = await this.collectMedia(items, `msg_${m.message_id ?? m.create_time_ms ?? 0}`);
     if (!text.trim() && attachments.length === 0 && attachmentFailures.length === 0) return null;
     return {
       from,
@@ -202,7 +209,7 @@ var IlinkClient = class {
     };
   }
   /** Download and decrypt media in the message; failures are recorded with a reason, text still comes through */
-  async collectMedia(items) {
+  async collectMedia(items, prefix) {
     const attachments = [];
     const failures = [];
     const cdnBase = this.opts.cdnBase.replace(/\/$/, "");
@@ -217,6 +224,10 @@ var IlinkClient = class {
         this.transport.get(url, {}, 6e4).then((r) => {
           if (r.status !== 200) {
             failures.push({ kind, name, reason: `http ${r.status}` });
+            return;
+          }
+          if (r.body.byteLength > MAX_DOWNLOAD_BYTES) {
+            failures.push({ kind, name, reason: `too large (${(r.body.byteLength / 1048576).toFixed(1)}MB, limit 100MB)` });
             return;
           }
           let buf = Buffer.from(r.body);
@@ -237,7 +248,7 @@ var IlinkClient = class {
             const raw = Buffer.from(img.aeskey, "hex");
             if (raw.length === 16) keyB64 = raw.toString("base64");
           }
-          grab(img.media, keyB64, "image", `image_${attachments.length}.bin`, "image/*");
+          grab(img.media, keyB64, "image", `image_${prefix}_${attachments.length}.bin`, "image/*");
           break;
         }
         case ITEM_FILE: {
@@ -249,13 +260,13 @@ var IlinkClient = class {
         case ITEM_VIDEO: {
           const v = it.video_item;
           if (!v?.media) break;
-          grab(v.media, v.media.aes_key, "video", `video_${attachments.length}.mp4`, "video/mp4");
+          grab(v.media, v.media.aes_key, "video", `video_${prefix}_${attachments.length}.mp4`, "video/mp4");
           break;
         }
         case ITEM_VOICE: {
           const v = it.voice_item;
           if (!v?.media || (v.text ?? "").trim()) break;
-          grab(v.media, v.media.aes_key, "audio", `voice_${attachments.length}.silk`, "audio/silk");
+          grab(v.media, v.media.aes_key, "audio", `voice_${prefix}_${attachments.length}.silk`, "audio/silk");
           break;
         }
       }
@@ -465,6 +476,7 @@ function sleep(ms) {
   return new Promise((r) => window.setTimeout(r, ms));
 }
 var MAX_UPLOAD_BYTES = 100 << 20;
+var MAX_DOWNLOAD_BYTES = MAX_UPLOAD_BYTES;
 function randomBytes16() {
   const b = Buffer.alloc(16);
   for (let i = 0; i < 16; i++) b[i] = Math.floor(Math.random() * 256);
@@ -624,7 +636,7 @@ function flatHeaders(h) {
 }
 
 // src/core/store.ts
-var DEDUP_KEEP = 500;
+var DEDUP_KEEP = 2e3;
 var StateStore = class {
   constructor(app, file, legacyFile) {
     this.app = app;
@@ -633,7 +645,7 @@ var StateStore = class {
     this.state = this.load();
   }
   state;
-  /** index over state.dedup so lookups are O(1) instead of scanning 500 keys per message */
+  /** index over state.dedup so lookups are O(1) instead of scanning the ring per message */
   dedupSet = /* @__PURE__ */ new Set();
   saveTimer = null;
   /** last save error, so a persistent failure is logged once instead of every retry */
@@ -646,11 +658,9 @@ var StateStore = class {
       scannedUser: "",
       cursor: "",
       contextTokens: {},
-      quotaTimes: [],
       pausedUntil: 0,
       dedup: [],
-      lastError: "",
-      lastPollAt: 0
+      lastError: ""
     };
   }
   load() {
@@ -664,6 +674,9 @@ var StateStore = class {
         if (await this.app.vault.adapter.exists(path)) {
           const raw = await this.app.vault.adapter.read(path);
           this.state = { ...this.emptyState(), ...JSON.parse(raw) };
+          const legacy = this.state;
+          delete legacy.quotaTimes;
+          delete legacy.lastPollAt;
           this.dedupSet = new Set(this.state.dedup);
           return;
         }
@@ -1246,6 +1259,16 @@ function timeOfDay(ts) {
 function sanitizeFileName(name) {
   return name.replace(/[\\/:*?"<>|#^[\]]/g, "_").trim() || "untitled";
 }
+async function uniquePath(app, path) {
+  if (!await app.vault.adapter.exists(path)) return path;
+  const dot = path.lastIndexOf(".");
+  const stem = dot > 0 ? path.slice(0, dot) : path;
+  const ext = dot > 0 ? path.slice(dot) : "";
+  for (let i = 1; ; i++) {
+    const candidate = `${stem}_${i}${ext}`;
+    if (!await app.vault.adapter.exists(candidate)) return candidate;
+  }
+}
 async function ensureFolder(app, folder) {
   if (!folder) return;
   if (await app.vault.adapter.exists(folder)) return;
@@ -1294,7 +1317,7 @@ async function importMessage(app, transport, msg, settings) {
             const img = info.images[i];
             const ph = `![[img:${i}]]`;
             if (img.data) {
-              const path = `${mediaFolder}/${base}_article${i}.${img.ext}`;
+              const path = await uniquePath(app, `${mediaFolder}/${base}_article${i}.${img.ext}`);
               try {
                 const ab = img.data.buffer.slice(
                   img.data.byteOffset,
@@ -1332,9 +1355,10 @@ async function importMessage(app, transport, msg, settings) {
   if (display) lines.push("", ...quoteBlock(display));
   for (const att of msg.attachments) {
     let ext = att.name.includes(".") ? att.name.split(".").pop() : "";
-    if (att.kind === "image") ext = ext && ext !== "bin" ? ext : "jpg";
+    if (att.kind === "image") ext = ext && ext !== "bin" ? ext : detectImageExt(att.data);
     const base = `${dayStamp(msg.timeMs)}_${timeOfDay(msg.timeMs).replace(":", "")}`;
-    const path = `${settings.attachmentFolder}/${base}_${sanitizeFileName(att.name.replace(/\.[^.]+$/, "") || att.kind)}.${ext || "bin"}`;
+    const rawPath = `${settings.attachmentFolder}/${base}_${sanitizeFileName(att.name.replace(/\.[^.]+$/, "") || att.kind)}.${ext || "bin"}`;
+    const path = await uniquePath(app, rawPath);
     try {
       const ab = att.data.buffer.slice(att.data.byteOffset, att.data.byteOffset + att.data.byteLength);
       await app.vault.adapter.writeBinary(path, ab);
@@ -1355,7 +1379,12 @@ function quoteBlock(text) {
 }
 async function appendDaily(app, inboxFolder, timeMs, sender, lines) {
   const dailyPath = `${inboxFolder}/${dayStamp(timeMs)}.md`;
-  const header = `---
+  const block = lines.join("\n") + "\n\n";
+  try {
+    if (await app.vault.adapter.exists(dailyPath)) {
+      await app.vault.adapter.append(dailyPath, block);
+    } else {
+      const header = `---
 date: ${dayStamp(timeMs)}
 sender: ${sender}
 ---
@@ -1363,11 +1392,8 @@ sender: ${sender}
 # ${t("importer.inboxTitle", { date: dayStamp(timeMs) })}
 
 `;
-  const block = lines.join("\n") + "\n\n";
-  try {
-    const exists = await app.vault.adapter.exists(dailyPath);
-    const prev = exists ? await app.vault.adapter.read(dailyPath) : header;
-    await app.vault.adapter.write(dailyPath, prev + block);
+      await app.vault.adapter.write(dailyPath, header + block);
+    }
     return true;
   } catch {
     return false;
@@ -2213,6 +2239,8 @@ var QrLoginModal = class extends import_obsidian5.Modal {
       this.setStatus(t("login.success"));
       this.close();
       this.onDone(out);
+    }).catch((e) => {
+      this.setStatus(String(e?.message ?? e));
     });
   }
   renderQr(url) {
@@ -2277,6 +2305,7 @@ var Outbox = class {
     for (const path of listing.files) {
       const name = path.split("/").pop() ?? "";
       const ext = (name.includes(".") ? name.split(".").pop() ?? "" : "").toLowerCase();
+      if (name.endsWith(".wechatian-failed.md")) continue;
       if (ext === "md") {
         processed += await this.flushTextFile(client, path, to, contextToken, inboxFolder);
         continue;
@@ -2325,7 +2354,9 @@ var Outbox = class {
     const res = await client.sendMedia(to, { kind, name, data }, contextToken);
     if (res.ok) {
       const now = Date.now();
-      const copyPath = `${attachmentFolder}/${dayStamp(now)}_${timeOfDay(now).replace(":", "")}_sent_${sanitizeFileName(name)}`;
+      const copyPath = await this.uniqueCopyPath(
+        `${attachmentFolder}/${dayStamp(now)}_${timeOfDay(now).replace(":", "")}_sent_${sanitizeFileName(name)}`
+      );
       let linkLine = name;
       try {
         await ensureFolder(this.app, attachmentFolder);
@@ -2347,8 +2378,22 @@ var Outbox = class {
 
 ${buildSendFailure(res.errmsg, res.ret, contextToken)}
 `;
-    await this.app.vault.adapter.write(notePath, note);
+    try {
+      await this.app.vault.adapter.write(notePath, note);
+    } catch {
+    }
     return 0;
+  }
+  /** _1 / _2 / ... before the extension when the copy target already exists */
+  async uniqueCopyPath(path) {
+    if (!await this.app.vault.adapter.exists(path)) return path;
+    const dot = path.lastIndexOf(".");
+    const stem = dot > 0 ? path.slice(0, dot) : path;
+    const ext = dot > 0 ? path.slice(dot) : "";
+    for (let i = 1; ; i++) {
+      const candidate = `${stem}_${i}${ext}`;
+      if (!await this.app.vault.adapter.exists(candidate)) return candidate;
+    }
   }
 };
 var BINARY_EXTS = /* @__PURE__ */ new Set([
@@ -2639,7 +2684,6 @@ var WechatianPlugin = class extends import_obsidian6.Plugin {
       this.setConn("connected");
       store.update((s) => {
         s.lastError = "";
-        s.lastPollAt = Date.now();
       });
       if (result.cursor) {
         store.update((s) => {

@@ -128,7 +128,9 @@ export class IlinkClient {
 
     const items = m.item_list ?? [];
     const text = extractText(items);
-    const { attachments, failures: attachmentFailures } = await this.collectMedia(items);
+    // attachment names are numbered per message, so parallel downloads of
+    // different messages never collide
+    const { attachments, failures: attachmentFailures } = await this.collectMedia(items, `msg_${m.message_id ?? m.create_time_ms ?? 0}`);
     if (!text.trim() && attachments.length === 0 && attachmentFailures.length === 0) return null;
 
     return {
@@ -143,7 +145,7 @@ export class IlinkClient {
   }
 
   /** Download and decrypt media in the message; failures are recorded with a reason, text still comes through */
-  private async collectMedia(items: IlinkMsgItem[]): Promise<{ attachments: InboundAttachment[]; failures: AttachmentFailure[] }> {
+  private async collectMedia(items: IlinkMsgItem[], prefix: string): Promise<{ attachments: InboundAttachment[]; failures: AttachmentFailure[] }> {
     const attachments: InboundAttachment[] = [];
     const failures: AttachmentFailure[] = [];
     const cdnBase = this.opts.cdnBase.replace(/\/$/, '');
@@ -169,6 +171,10 @@ export class IlinkClient {
               failures.push({ kind, name, reason: `http ${r.status}` });
               return;
             }
+            if (r.body.byteLength > MAX_DOWNLOAD_BYTES) {
+              failures.push({ kind, name, reason: `too large (${(r.body.byteLength / 1048576).toFixed(1)}MB, limit 100MB)` });
+              return;
+            }
             let buf: Buffer = Buffer.from(r.body);
             if (key) buf = decryptEcb(buf, key);
             attachments.push({ kind, name, mime, data: new Uint8Array(buf) });
@@ -189,7 +195,7 @@ export class IlinkClient {
             const raw = Buffer.from(img.aeskey, 'hex');
             if (raw.length === 16) keyB64 = raw.toString('base64');
           }
-          grab(img.media, keyB64, 'image', `image_${attachments.length}.bin`, 'image/*');
+          grab(img.media, keyB64, 'image', `image_${prefix}_${attachments.length}.bin`, 'image/*');
           break;
         }
         case ITEM_FILE: {
@@ -201,13 +207,13 @@ export class IlinkClient {
         case ITEM_VIDEO: {
           const v = it.video_item;
           if (!v?.media) break;
-          grab(v.media, v.media.aes_key, 'video', `video_${attachments.length}.mp4`, 'video/mp4');
+          grab(v.media, v.media.aes_key, 'video', `video_${prefix}_${attachments.length}.mp4`, 'video/mp4');
           break;
         }
         case ITEM_VOICE: {
           const v = it.voice_item;
           if (!v?.media || (v.text ?? '').trim()) break;
-          grab(v.media, v.media.aes_key, 'audio', `voice_${attachments.length}.silk`, 'audio/silk');
+          grab(v.media, v.media.aes_key, 'audio', `voice_${prefix}_${attachments.length}.silk`, 'audio/silk');
           break;
         }
       }
@@ -449,6 +455,9 @@ export function sleep(ms: number): Promise<void> {
 
 /** 100MB CDN limit, aligned with cc-connect */
 export const MAX_UPLOAD_BYTES = 100 << 20;
+
+/** Cap on one inbound media download: a malformed/hostile gateway message must not exhaust memory */
+export const MAX_DOWNLOAD_BYTES = MAX_UPLOAD_BYTES;
 
 export interface CdnUploadedRef {
   downloadParam: string;

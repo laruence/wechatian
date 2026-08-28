@@ -19,7 +19,12 @@ export class ObsidianTransport implements HttpTransport {
     body: string | ArrayBuffer | undefined,
     timeoutMs: number,
   ): Promise<HttpResponse> {
-    // requestUrl has no official timeout parameter; race a timer and treat it as a timeout when it fires
+    // requestUrl has no official timeout parameter; race a timer and treat it as a timeout when it fires.
+    // Known limitation: Promise.race only stops waiting — it cannot abort the
+    // underlying requestUrl, so the request keeps running to completion in the
+    // background. Acceptable here: the long-poll loop uses NodeTransport
+    // (which aborts properly); this transport serves only one-off calls like
+    // the settings-page test send.
     let timer: number | null = null;
     const timeoutPromise = new Promise<never>((_, reject) => {
       timer = window.setTimeout(() => reject(new HttpError('request timeout', 0, true)), timeoutMs);

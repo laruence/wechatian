@@ -16,6 +16,7 @@ import {
   buildMediaItem,
   buildCdnUploadUrl,
   isVideoExt,
+  MAX_DOWNLOAD_BYTES,
   MAX_UPLOAD_BYTES,
 } from '../src/core/ilink';
 import {
@@ -265,6 +266,35 @@ test('poll: failed media download is recorded with a reason, not silently droppe
   assert.ok(f.reason.includes('503'));
 });
 
+test('poll: oversized inbound media is rejected without being saved', async () => {
+  const key = Buffer.from('0123456789abcdef');
+  const tr = new ScriptableTransport()
+    .on(/getupdates/, {
+      body: JSON.stringify({
+        ret: 0,
+        msgs: [
+          {
+            message_type: MSG_TYPE_USER,
+            from_user_id: 'alice',
+            message_id: 9,
+            create_time_ms: 1700000000000,
+            item_list: [
+              {
+                type: ITEM_IMAGE,
+                image_item: { media: { encrypt_query_param: 'enc-param', aes_key: key.toString('base64') } },
+              },
+            ],
+          },
+        ],
+      }),
+    })
+    .on(/cdn\.example\/download/, { body: new Uint8Array(MAX_DOWNLOAD_BYTES + 1) });
+  const r = await client(tr).poll('');
+  assert.equal(r.messages.length, 1);
+  assert.equal(r.messages[0].attachments.length, 0);
+  assert.ok(r.messages[0].attachmentFailures[0].reason.includes('too large'));
+});
+
 /* -------------------------------------------------------------- sendText */
 
 test('sendText: chunked into multiple gateway calls', async () => {
@@ -480,24 +510,24 @@ function storeFixture() {
   return { app, files };
 }
 
-test('store dedup: seen() deduplicates, trims at 500 and keeps trimming consistent', async () => {
+test('store dedup: seen() deduplicates, trims at the keep limit and keeps trimming consistent', async () => {
   const { app, files } = storeFixture();
   const store = new StateStore(app, 'plugin/state.json');
   assert.equal(store.seen('k1'), false);
   assert.equal(store.seen('k1'), true, 'duplicate key is rejected');
 
-  // push past the 500-entry trim boundary
-  for (let i = 0; i < 505; i++) assert.equal(store.seen(`m${i}`), false);
+  // push past the 2000-entry trim boundary
+  for (let i = 0; i < 2005; i++) assert.equal(store.seen(`m${i}`), false);
   await store.saveNow();
   const saved = JSON.parse(files.get('plugin/state.json')!) as { dedup: string[] };
-  assert.equal(saved.dedup.length, 500);
+  assert.equal(saved.dedup.length, 2000);
   // the trimmed-out oldest keys are no longer deduplicated; kept keys still are
   assert.equal(store.seen('m0'), false, 'oldest key fell out of the ring');
-  assert.equal(store.seen('m504'), true, 'recent key still deduplicated after trim');
+  assert.equal(store.seen('m2004'), true, 'recent key still deduplicated after trim');
 
   // the trimmed ring survives a reload through init()
   const store2 = new StateStore(app, 'plugin/state.json');
   await store2.init();
-  assert.equal(store2.seen('m504'), true, 'dedup index rebuilt from disk');
+  assert.equal(store2.seen('m2004'), true, 'dedup index rebuilt from disk');
   assert.equal(store2.seen('m0'), false);
 });

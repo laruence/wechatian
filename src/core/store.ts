@@ -8,18 +8,20 @@ export interface BotState {
   scannedUser: string; // ilink_user_id of the user who scanned
   cursor: string;
   contextTokens: Record<string, string>;
-  quotaTimes: number[]; // sliding-window timestamps for the proactive-send quota
   pausedUntil: number; // pause deadline after session expiry
   dedup: string[]; // recent-message dedup ring
   lastError: string;
-  lastPollAt: number;
 }
 
-const DEDUP_KEEP = 500;
+/**
+ * How many recent message keys to remember. Large enough that a gateway
+ * replaying a big backlog after a reconnect still deduplicates.
+ */
+const DEDUP_KEEP = 2000;
 
 export class StateStore {
   private state: BotState;
-  /** index over state.dedup so lookups are O(1) instead of scanning 500 keys per message */
+  /** index over state.dedup so lookups are O(1) instead of scanning the ring per message */
   private dedupSet = new Set<string>();
   private saveTimer: number | null = null;
   /** last save error, so a persistent failure is logged once instead of every retry */
@@ -42,11 +44,9 @@ export class StateStore {
       scannedUser: '',
       cursor: '',
       contextTokens: {},
-      quotaTimes: [],
       pausedUntil: 0,
       dedup: [],
       lastError: '',
-      lastPollAt: 0,
     };
   }
 
@@ -62,6 +62,10 @@ export class StateStore {
         if (await this.app.vault.adapter.exists(path)) {
           const raw = await this.app.vault.adapter.read(path);
           this.state = { ...this.emptyState(), ...(JSON.parse(raw) as Partial<BotState>) };
+          // drop fields that older versions persisted but nothing reads anymore
+          const legacy = this.state as unknown as Record<string, unknown>;
+          delete legacy.quotaTimes;
+          delete legacy.lastPollAt;
           this.dedupSet = new Set(this.state.dedup);
           return; // a legacy state.json is read as-is; the next save writes it to the new location
         }

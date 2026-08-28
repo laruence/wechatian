@@ -35,12 +35,18 @@ export class QrLoginModal extends Modal {
       onScanned: () => this.setStatus(t('login.scanned')),
       onError: (msg) => this.setStatus(msg),
       cancelled: () => this.cancelled,
-    }).then((out) => {
-      if (!out || this.cancelled) return;
-      this.setStatus(t('login.success'));
-      this.close();
-      this.onDone(out);
-    });
+    })
+      .then((out) => {
+        if (!out || this.cancelled) return;
+        this.setStatus(t('login.success'));
+        this.close();
+        this.onDone(out);
+      })
+      .catch((e: unknown) => {
+        // without this an early network error would become an unhandled
+        // rejection and leave the modal stuck on "fetching QR code"
+        this.setStatus(String((e as Error)?.message ?? e));
+      });
   }
 
   private renderQr(url: string): void {

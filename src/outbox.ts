@@ -38,6 +38,10 @@ export class Outbox {
       const name = path.split('/').pop() ?? '';
       const ext = (name.includes('.') ? name.split('.').pop() ?? '' : '').toLowerCase();
 
+      // send-failure sidecars end in .md: sending them would deliver the
+      // failure text as a message and delete the record — never touch them
+      if (name.endsWith('.wechatian-failed.md')) continue;
+
       if (ext === 'md') {
         processed += await this.flushTextFile(client, path, to, contextToken, inboxFolder);
         continue;
@@ -103,7 +107,9 @@ export class Outbox {
     if (res.ok) {
       // keep a copy next to received media so the conversation note can link it
       const now = Date.now();
-      const copyPath = `${attachmentFolder}/${dayStamp(now)}_${timeOfDay(now).replace(':', '')}_sent_${sanitizeFileName(name)}`;
+      const copyPath = await this.uniqueCopyPath(
+        `${attachmentFolder}/${dayStamp(now)}_${timeOfDay(now).replace(':', '')}_sent_${sanitizeFileName(name)}`,
+      );
       let linkLine = name;
       try {
         await ensureFolder(this.app, attachmentFolder);
@@ -125,8 +131,26 @@ export class Outbox {
     // Failure: record a categorized reason + fix hint in a sidecar note, visible without blocking retries
     const notePath = `${path}.wechatian-failed.md`;
     const note = `# ${name}\n\n${buildSendFailure(res.errmsg, res.ret, contextToken)}\n`;
-    await this.app.vault.adapter.write(notePath, note);
+    try {
+      // overwrite, not append: the same file is retried every flush, and a
+      // growing stack of identical failure notes would only bury the vault
+      await this.app.vault.adapter.write(notePath, note);
+    } catch {
+      /* a missing sidecar is cosmetic; the file itself still survives for retry */
+    }
     return 0;
+  }
+
+  /** _1 / _2 / ... before the extension when the copy target already exists */
+  private async uniqueCopyPath(path: string): Promise<string> {
+    if (!(await this.app.vault.adapter.exists(path))) return path;
+    const dot = path.lastIndexOf('.');
+    const stem = dot > 0 ? path.slice(0, dot) : path;
+    const ext = dot > 0 ? path.slice(dot) : '';
+    for (let i = 1; ; i++) {
+      const candidate = `${stem}_${i}${ext}`;
+      if (!(await this.app.vault.adapter.exists(candidate))) return candidate;
+    }
   }
 }
 

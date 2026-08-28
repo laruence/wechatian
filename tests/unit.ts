@@ -44,11 +44,16 @@ class FakeVault {
     // a "folder" exists when it is registered as one or is a prefix of any file path
     exists: async (p: string) =>
       this.files.has(p) ||
+      this.bins.has(p) ||
       this.folders.has(p) ||
-      [...this.files.keys()].some((f) => f.startsWith(`${p}/`)),
+      [...this.files.keys(), ...this.bins.keys()].some((f) => f.startsWith(`${p}/`)),
     read: async (p: string) => {
       if (!this.files.has(p)) throw new Error(`ENOENT: ${p}`);
       return this.files.get(p)!;
+    },
+    append: async (p: string, c: string) => {
+      if (this.writeShouldFail) throw new Error('disk full');
+      this.files.set(p, (this.files.get(p) ?? '') + c);
     },
     write: async (p: string, c: string) => {
       if (this.writeShouldFail) throw new Error('disk full');
@@ -373,6 +378,23 @@ test('importMessage: attachment failure is recorded, import continues', async ()
   assert.deepEqual(r.attachmentFailures, ['photo.jpg (disk full)']);
 });
 
+test('importMessage: same-second same-name attachments get distinct paths; image ext from magic bytes', async () => {
+  const v = new FakeVault();
+  // two identically-named images arriving in the same second (message prefix is
+  // per-message, so cross-message downloads can collide on the name)
+  const png = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2]);
+  const msg = MSG({ attachments: [
+    { kind: 'image', name: 'image_0.bin', mime: 'image/*', data: png },
+    { kind: 'image', name: 'image_0.bin', mime: 'image/*', data: png },
+  ] });
+  const r = await importMessage(v.app, new StubTransport(), msg, IMPORT_OPTS);
+  assert.equal(r.attachmentPaths.length, 2);
+  assert.notEqual(r.attachmentPaths[0], r.attachmentPaths[1], 'second copy must not overwrite the first');
+  assert.ok(v.bins.has(r.attachmentPaths[0]) && v.bins.has(r.attachmentPaths[1]));
+  // .bin is resolved by magic bytes: PNG, not the jpg fallback
+  for (const p of r.attachmentPaths) assert.ok(p.endsWith('.png'), `magic-byte ext for ${p}`);
+});
+
 /* ------------------------------------------------------------- outbox */
 
 function outboxFixture() {
@@ -443,6 +465,16 @@ test('outbox: empty .md is deleted without sending', async () => {
   assert.equal(await flush(), 0);
   assert.equal(v.files.has('Wechatian/outbox/empty.md'), false);
   assert.equal(transport.requests.length, 0);
+});
+
+test('outbox: failure sidecars are never sent as messages or deleted', async () => {
+  const { v, transport, flush } = outboxFixture();
+  // a leftover failure record from an earlier media attempt ends in .md and
+  // would otherwise be delivered to WeChat as text and deleted
+  await v.adapter.write('Wechatian/outbox/photo.jpg.wechatian-failed.md', '# photo.jpg\n\nsome failure reason\n');
+  assert.equal(await flush(), 0);
+  assert.equal(v.files.has('Wechatian/outbox/photo.jpg.wechatian-failed.md'), true, 'sidecar left untouched');
+  assert.equal(transport.requests.length, 0, 'nothing sent to the gateway');
 });
 
 /* ------------------------------------------------------------ agent guide */

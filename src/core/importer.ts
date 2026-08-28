@@ -4,6 +4,7 @@ import { TFolder } from 'obsidian';
 import type { ArticleAsset, InboundMessage } from './types';
 import type { HttpTransport } from './http';
 import { extractLinks, fetchArticle, type HtmlParser } from './article';
+import { detectImageExt } from './crypto';
 import { t } from '../i18n';
 
 export interface ImportSettings {
@@ -43,6 +44,22 @@ export function timeOfDay(ts: number): string {
 /** Replace characters that are invalid in file names */
 export function sanitizeFileName(name: string): string {
   return name.replace(/[\\/:*?"<>|#^[\]]/g, '_').trim() || 'untitled';
+}
+
+/**
+ * When the target already exists (e.g. two attachments with the same
+ * generated name arriving in the same second), insert _1 / _2 / ... before
+ * the extension so nothing silently overwrites anything else.
+ */
+async function uniquePath(app: App, path: string): Promise<string> {
+  if (!(await app.vault.adapter.exists(path))) return path;
+  const dot = path.lastIndexOf('.');
+  const stem = dot > 0 ? path.slice(0, dot) : path;
+  const ext = dot > 0 ? path.slice(dot) : '';
+  for (let i = 1; ; i++) {
+    const candidate = `${stem}_${i}${ext}`;
+    if (!(await app.vault.adapter.exists(candidate))) return candidate;
+  }
 }
 
 async function ensureFolder(app: App, folder: string): Promise<void> {
@@ -108,7 +125,7 @@ export async function importMessage(
             const img = info.images[i];
             const ph = `![[img:${i}]]`;
             if (img.data) {
-              const path = `${mediaFolder}/${base}_article${i}.${img.ext}`;
+              const path = await uniquePath(app, `${mediaFolder}/${base}_article${i}.${img.ext}`);
               try {
                 const ab = img.data.buffer.slice(
                   img.data.byteOffset,
@@ -151,9 +168,11 @@ export async function importMessage(
   // store attachments (rendered inline, inside the quote)
   for (const att of msg.attachments) {
     let ext = att.name.includes('.') ? att.name.split('.').pop() : '';
-    if (att.kind === 'image') ext = ext && ext !== 'bin' ? ext : 'jpg';
+    // images arrive as nameless .bin from the CDN: identify jpg/png/gif/webp by magic bytes
+    if (att.kind === 'image') ext = ext && ext !== 'bin' ? ext : detectImageExt(att.data);
     const base = `${dayStamp(msg.timeMs)}_${timeOfDay(msg.timeMs).replace(':', '')}`;
-    const path = `${settings.attachmentFolder}/${base}_${sanitizeFileName(att.name.replace(/\.[^.]+$/, '') || att.kind)}.${ext || 'bin'}`;
+    const rawPath = `${settings.attachmentFolder}/${base}_${sanitizeFileName(att.name.replace(/\.[^.]+$/, '') || att.kind)}.${ext || 'bin'}`;
+    const path = await uniquePath(app, rawPath);
     try {
       // writeBinary needs an ArrayBuffer; slice out the exact region from the Uint8Array view
       const ab = att.data.buffer.slice(att.data.byteOffset, att.data.byteOffset + att.data.byteLength) as ArrayBuffer;
@@ -184,12 +203,17 @@ export function quoteBlock(text: string): string[] {
 /** Append one block to the daily conversation note; creates it with a header when missing */
 async function appendDaily(app: App, inboxFolder: string, timeMs: number, sender: string, lines: string[]): Promise<boolean> {
   const dailyPath = `${inboxFolder}/${dayStamp(timeMs)}.md`;
-  const header = `---\ndate: ${dayStamp(timeMs)}\nsender: ${sender}\n---\n\n# ${t('importer.inboxTitle', { date: dayStamp(timeMs) })}\n\n`;
   const block = lines.join('\n') + '\n\n';
   try {
-    const exists = await app.vault.adapter.exists(dailyPath);
-    const prev = exists ? await app.vault.adapter.read(dailyPath) : header;
-    await app.vault.adapter.write(dailyPath, prev + block);
+    if (await app.vault.adapter.exists(dailyPath)) {
+      // append the new block only; rewriting the whole file would read it back
+      // first, which on iCloud-synced vaults can race a stale copy and lose entries
+      await app.vault.adapter.append(dailyPath, block);
+    } else {
+      // sender goes in frontmatter so agents can look up the recipient ID
+      const header = `---\ndate: ${dayStamp(timeMs)}\nsender: ${sender}\n---\n\n# ${t('importer.inboxTitle', { date: dayStamp(timeMs) })}\n\n`;
+      await app.vault.adapter.write(dailyPath, header + block);
+    }
     return true;
   } catch {
     return false;
