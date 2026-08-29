@@ -55,6 +55,11 @@ receiving
   Server holds ~35s; client timeout should exceed it (wechatian: 45s).
   Client timeout = normal, loop again. Response carries new cursor in
   get_updates_buf (empty = keep old).
+  HTTP 412/401/403 = gateway rejects the session (stale/superseded cursor or
+  token). Observed after an app restart: the stored cursor started returning
+  412 while the same request replayed from a CLI got 200. Treat as session
+  expiry (re-scan), never as a retryable error — retrying the same cursor
+  forever changes nothing.
 
   message fields:
     message_type   1 = user, 2 = bot itself (skip)

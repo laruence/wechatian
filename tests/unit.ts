@@ -446,6 +446,25 @@ function isSilkView(u: Uint8Array): boolean {
   return new TextDecoder().decode(u.slice(0, 7)).includes('#!SILK');
 }
 
+/* ------------------------------------------------------------- poll */
+
+test('poll: gateway session rejection (412) surfaces as sessionExpired, not a retryable error', async () => {
+  const transport = new StubTransport();
+  const client = new IlinkClient(transport, { baseUrl: 'https://gw.example', cdnBase: 'https://cdn.example' }, 'bottoken');
+  transport.response = { status: 412, body: '' };
+  const r = await client.poll('somecursor');
+  assert.deepEqual(r, { messages: [], sessionExpired: true }, 'the loop must stop hammering a dead cursor');
+});
+
+test('poll: other http errors stay retryable', async () => {
+  const transport = new StubTransport();
+  const client = new IlinkClient(transport, { baseUrl: 'https://gw.example', cdnBase: 'https://cdn.example' }, 'bottoken');
+  transport.response = { status: 500, body: '' };
+  const r = await client.poll('somecursor');
+  assert.equal(r.sessionExpired, false);
+  assert.ok(r.error?.includes('http 500'));
+});
+
 /* ------------------------------------------------------------- outbox */
 
 function outboxFixture() {

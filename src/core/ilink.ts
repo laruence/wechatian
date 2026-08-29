@@ -116,6 +116,12 @@ export class IlinkClient {
       if (e instanceof HttpError && e.timeout) {
         return { messages: [], sessionExpired: false };
       }
+      // 401/403/412 mean the gateway rejects this session outright (stale or
+      // superseded cursor/token). Retrying the same one forever changes
+      // nothing — surface it as session expiry so the user re-scans instead.
+      if (e instanceof HttpError && (e.status === 412 || e.status === 401 || e.status === 403)) {
+        return { messages: [], sessionExpired: true };
+      }
       return { messages: [], sessionExpired: false, error: String((e as Error)?.message ?? e) };
     }
   }

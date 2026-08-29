@@ -994,6 +994,9 @@ var IlinkClient = class {
       if (e instanceof HttpError && e.timeout) {
         return { messages: [], sessionExpired: false };
       }
+      if (e instanceof HttpError && (e.status === 412 || e.status === 401 || e.status === 403)) {
+        return { messages: [], sessionExpired: true };
+      }
       return { messages: [], sessionExpired: false, error: String(e?.message ?? e) };
     }
   }
