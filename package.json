@@ -6,7 +6,7 @@
     "build": "node esbuild.config.js",
     "watch": "node esbuild.config.js --watch",
     "lint": "eslint src/",
-    "test": "npm run build && node --test scripts/unit-test.js scripts/unit-ilink.js scripts/unit-article.js",
+    "test": "npm run build && npx tsc --noEmit && node --test scripts/unit-test.js scripts/unit-ilink.js scripts/unit-article.js",
     "smoke": "node scripts/smoke.js"
   },
   "devDependencies": {
