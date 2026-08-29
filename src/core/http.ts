@@ -27,7 +27,8 @@ export interface HttpTransport {
 }
 
 export function bodyText(r: HttpResponse): string {
-  return Buffer.from(r.body).toString('utf8');
+  // wrap in a view first: Buffer.from has no (ArrayBuffer | Uint8Array) overload
+  return Buffer.from(new Uint8Array(r.body)).toString('utf8');
 }
 
 /**
@@ -44,7 +45,7 @@ export async function bodyTextAuto(r: HttpResponse): Promise<string> {
       /* fall through to raw decode */
     }
   }
-  return Buffer.from(r.body).toString('utf8');
+  return Buffer.from(new Uint8Array(r.body)).toString('utf8');
 }
 
 export function bodyJson<T>(r: HttpResponse): T {

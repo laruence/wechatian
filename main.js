@@ -45,7 +45,7 @@ var HttpError = class extends Error {
   }
 };
 function bodyText(r) {
-  return Buffer.from(r.body).toString("utf8");
+  return Buffer.from(new Uint8Array(r.body)).toString("utf8");
 }
 async function bodyTextAuto(r) {
   const bytes = new Uint8Array(r.body);
@@ -56,7 +56,7 @@ async function bodyTextAuto(r) {
     } catch {
     }
   }
-  return Buffer.from(r.body).toString("utf8");
+  return Buffer.from(new Uint8Array(r.body)).toString("utf8");
 }
 function bodyJson(r) {
   return JSON.parse(bodyText(r));
