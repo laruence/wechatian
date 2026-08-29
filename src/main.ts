@@ -282,6 +282,9 @@ export default class WechatianPlugin extends Plugin {
     this.setConn('connecting');
 
     let backoff = 1000;
+    // consecutive 412 cursor resets: the wait doubles per streak (2s -> 4s -> ...)
+    // so a persistent 412 stays polite instead of knocking every 2 seconds
+    let resetStreak = 0;
     // user we currently show "typing" for; cleared once the round finishes processing
     let typingFor = '';
     while (this.polling && !this.stopRequested) {
@@ -315,15 +318,14 @@ export default class WechatianPlugin extends Plugin {
 
       if (result.resetCursor) {
         // gateway rejected the stored cursor (412) but the session itself is
-        // fine: resume with an empty cursor right away — no user action needed
+        // fine: resume with an empty cursor — no user action needed
+        resetStreak++;
         store.update((s) => {
           s.cursor = '';
           s.lastError = '';
         });
         this.setConn('connecting');
-        // small wait: if the reset itself keeps 412-ing we must not hot-loop
-        await sleep(2000);
-        backoff = 1000;
+        await sleep(Math.min(2000 * 2 ** (resetStreak - 1), 30_000));
         continue;
       }
 
@@ -338,6 +340,7 @@ export default class WechatianPlugin extends Plugin {
       }
 
       backoff = 1000;
+      resetStreak = 0;
       this.setConn('connected');
       // idle rounds change nothing: update() only when a value actually
       // differs, otherwise every poll rewrites state.json and iCloud forks a

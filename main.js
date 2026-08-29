@@ -3604,6 +3604,7 @@ var WechatianPlugin = class extends import_obsidian6.Plugin {
     this.client = this.makeClient();
     this.setConn("connecting");
     let backoff = 1e3;
+    let resetStreak = 0;
     let typingFor = "";
     while (this.polling && !this.stopRequested) {
       const store = this.store;
@@ -3628,13 +3629,13 @@ var WechatianPlugin = class extends import_obsidian6.Plugin {
         continue;
       }
       if (result.resetCursor) {
+        resetStreak++;
         store.update((s) => {
           s.cursor = "";
           s.lastError = "";
         });
         this.setConn("connecting");
-        await sleep(2e3);
-        backoff = 1e3;
+        await sleep(Math.min(2e3 * 2 ** (resetStreak - 1), 3e4));
         continue;
       }
       if (result.error) {
@@ -3647,6 +3648,7 @@ var WechatianPlugin = class extends import_obsidian6.Plugin {
         continue;
       }
       backoff = 1e3;
+      resetStreak = 0;
       this.setConn("connected");
       store.update((s) => {
         if (s.lastError !== "") s.lastError = "";
