@@ -40,6 +40,8 @@ class FakeVault {
   bins = new Map<string, Uint8Array>();
   folders = new Set<string>();
   writeShouldFail = false;
+  /** path -> adapter.write call count (churn-guard assertions) */
+  writes = new Map<string, number>();
 
   adapter = {
     // a "folder" exists when it is registered as one or is a prefix of any file path
@@ -58,7 +60,13 @@ class FakeVault {
     },
     write: async (p: string, c: string) => {
       if (this.writeShouldFail) throw new Error('disk full');
+      this.writes.set(p, (this.writes.get(p) ?? 0) + 1);
       this.files.set(p, c);
+    },
+    readBinary: async (p: string) => {
+      if (!this.bins.has(p)) throw new Error(`ENOENT: ${p}`);
+      const u = this.bins.get(p)!;
+      return u.buffer.slice(u.byteOffset, u.byteOffset + u.byteLength) as ArrayBuffer;
     },
     writeBinary: async (p: string, c: ArrayBuffer) => {
       if (this.writeShouldFail) throw new Error('disk full');
@@ -69,7 +77,7 @@ class FakeVault {
       this.bins.delete(p);
     },
     list: async (p: string) => ({
-      files: [...this.files.keys()].filter((f) => f.startsWith(`${p}/`)),
+      files: [...this.files.keys(), ...this.bins.keys()].filter((f) => f.startsWith(`${p}/`)),
       folders: [],
     }),
   };
@@ -524,6 +532,25 @@ test('outbox: failure sidecars are never sent as messages or deleted', async () 
   assert.equal(await flush(), 0);
   assert.equal(v.files.has('Wechatian/outbox/photo.jpg.wechatian-failed.md'), true, 'sidecar left untouched');
   assert.equal(transport.requests.length, 0, 'nothing sent to the gateway');
+});
+
+test('outbox: media failure writes the sidecar once; retries never rewrite it', async () => {
+  const { v, transport, flush } = outboxFixture();
+  v.bins.set('Wechatian/outbox/photo.jpg', new Uint8Array([1, 2, 3, 4]));
+  // getuploadurl rejects -> sendMedia fails before any CDN traffic
+  transport.response = { status: 200, body: JSON.stringify({ errcode: -1, errmsg: 'denied' }) };
+  await flush();
+  const sidecar = 'Wechatian/outbox/photo.jpg.wechatian-failed.md';
+  assert.equal(v.files.has(sidecar), true, 'sidecar written on first failure');
+  assert.ok(v.files.get(sidecar)!.startsWith('# photo.jpg'));
+  assert.equal(v.writes.get(sidecar), 1);
+
+  // while the failure persists every flush re-derives byte-identical content;
+  // rewriting it each round would churn iCloud conflict copies forever
+  await flush();
+  await flush();
+  assert.equal(v.bins.has('Wechatian/outbox/photo.jpg'), true, 'media kept for retry');
+  assert.equal(v.writes.get(sidecar), 1, 'retries skip the byte-identical rewrite');
 });
 
 /* ------------------------------------------------------------ agent guide */

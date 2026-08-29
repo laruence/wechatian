@@ -46,6 +46,27 @@ export function encryptEcbInto(plain: Uint8Array, key: Buffer, out: Buffer): voi
   c.final().copy(out, off);
 }
 
+/**
+ * Like decryptEcb, but writes into a caller-owned buffer — no intermediate
+ * copies (decryptEcb allocated the update()/final() chunks plus a concat
+ * copy, tripling the footprint of a 100MB download). Decrypts in chunks so
+ * the per-call input stays small, like encryptEcbInto.
+ * Returns the number of bytes written into out; the plaintext is at most
+ * cipher.length - 1 bytes (PKCS#7 always strips at least one byte), so a
+ * caller-supplied buffer of cipher.length always suffices.
+ */
+export function decryptEcbInto(cipher: Uint8Array, key: Buffer, out: Buffer): number {
+  const d = createDecipheriv('aes-128-ecb', key, null);
+  d.setAutoPadding(true);
+  let off = 0;
+  const CHUNK = 1 << 20; // 1 MiB — any multiple of the 16-byte block size works
+  while (cipher.length - off > CHUNK) {
+    off += d.update(cipher.subarray(off, off + CHUNK)).copy(out, off);
+  }
+  off += d.update(cipher.subarray(off)).copy(out, off);
+  return off + d.final().copy(out, off);
+}
+
 export function downloadUrl(cdnBase: string, encParam: string): string {
   return `${cdnBase.replace(/\/$/, '')}/download?encrypted_query_param=${encodeURIComponent(encParam)}`;
 }
@@ -58,8 +79,18 @@ export function detectImageExt(b: Uint8Array): string {
   return 'jpg';
 }
 
+/**
+ * MD5 over a (possibly huge) byte buffer. Feeds the hash in 1MiB chunks: the
+ * total is identical to a single update(), but a 100MB input no longer blocks
+ * the renderer in one several-hundred-millisecond call.
+ */
 export function md5Hex(b: Uint8Array): string {
-  return createHash('md5').update(b).digest('hex');
+  const h = createHash('md5');
+  const CHUNK = 1 << 20;
+  for (let off = 0; off < b.length; off += CHUNK) {
+    h.update(b.subarray(off, Math.min(off + CHUNK, b.length)));
+  }
+  return h.digest('hex');
 }
 
 /** AES-ECB ciphertext size after PKCS#7 padding */

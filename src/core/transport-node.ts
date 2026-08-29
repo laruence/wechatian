@@ -13,6 +13,13 @@ import { HttpError } from './http';
 
 const MAX_REDIRECTS = 5;
 
+/** Cap on one buffered response: inbound media is at most 100MB of ciphertext
+ *  (100MB raw + up to 16 bytes of padding), so 105MB covers every legitimate
+ *  download while a malformed/hostile host cannot exhaust memory. Enforced in
+ *  the data handler below, i.e. the download is cut off mid-stream instead of
+ *  after the full body arrived. */
+const MAX_RESPONSE_BYTES = 105 * 1024 * 1024;
+
 export class NodeTransport implements HttpTransport {
   async get(url: string, headers: Record<string, string>, timeoutMs: number): Promise<HttpResponse> {
     return this.request('GET', url, headers, undefined, timeoutMs, 0);
@@ -85,16 +92,34 @@ export class NodeTransport implements HttpTransport {
           }
 
           const chunks: Buffer[] = [];
+          let received = 0;
           res.on('data', (c: Buffer) => {
             arm(); // data flowing: the connection is alive, keep waiting
+            received += c.length;
+            if (received > MAX_RESPONSE_BYTES) {
+              // destroy before buffering the oversized body any further; the
+              // req 'error' handler below surfaces the HttpError to the caller
+              req.destroy(new HttpError('response too large', status));
+              return;
+            }
             chunks.push(c);
           });
           res.on('error', (e) => settle(() => reject(new HttpError(String((e)?.message ?? e), status))));
           res.on('end', () => {
             settle(() => {
-              const buf = Buffer.concat(chunks);
-              const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
-              resolve({ status, body: ab, headers: flatHeaders(res.headers) });
+              // skip Buffer.concat entirely for the common single-chunk case;
+              // otherwise concat once and return a view over it (no third copy
+              // via buffer.slice)
+              let body: Uint8Array<ArrayBufferLike>;
+              if (chunks.length === 1) {
+                const c = chunks[0];
+                // small chunks (< 4KB) come from Node's shared pool; hand out a
+                // dedicated copy so callers never hold a view into pool memory
+                body = c.byteLength === c.buffer.byteLength && c.byteOffset === 0 ? c : Buffer.from(c);
+              } else {
+                body = Buffer.concat(chunks);
+              }
+              resolve({ status, body, headers: flatHeaders(res.headers) });
             });
           });
         },

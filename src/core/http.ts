@@ -1,8 +1,10 @@
-/** HTTP transport abstraction: the plugin uses requestUrl (bypasses CORS); node smoke tests use fetch */
+/** HTTP transport abstraction: the plugin runs on Node's http stack (NodeTransport); node smoke tests use fetch */
 
 export interface HttpResponse {
   status: number;
-  body: ArrayBuffer;
+  /** Widened from ArrayBuffer so transports can return a buffer view directly
+   *  (NodeTransport avoids the concat->slice copy); plain ArrayBuffer works too. */
+  body: ArrayBuffer | Uint8Array<ArrayBufferLike>;
   /** Response headers with lowercase keys */
   headers: Record<string, string>;
 }

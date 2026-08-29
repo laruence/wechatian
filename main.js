@@ -33,7 +33,7 @@ __export(main_exports, {
   default: () => WechatianPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian6 = require("obsidian");
+var import_obsidian5 = require("obsidian");
 
 // src/core/http.ts
 var HttpError = class extends Error {
@@ -61,13 +61,6 @@ async function bodyTextAuto(r) {
 function bodyJson(r) {
   return JSON.parse(bodyText(r));
 }
-function lowerHeaders(headers) {
-  const out = {};
-  if (headers) {
-    for (const [k, v] of Object.entries(headers)) out[k.toLowerCase()] = v;
-  }
-  return out;
-}
 
 // src/core/crypto.ts
 var import_crypto = require("crypto");
@@ -83,11 +76,6 @@ function parseAesKey(aesKeyBase64) {
   }
   return null;
 }
-function decryptEcb(cipher, key) {
-  const d = (0, import_crypto.createDecipheriv)("aes-128-ecb", key, null);
-  d.setAutoPadding(true);
-  return Buffer.concat([d.update(cipher), d.final()]);
-}
 function encryptEcbInto(plain, key, out) {
   const c = (0, import_crypto.createCipheriv)("aes-128-ecb", key, null);
   c.setAutoPadding(true);
@@ -98,6 +86,17 @@ function encryptEcbInto(plain, key, out) {
   }
   off += c.update(plain.subarray(off)).copy(out, off);
   c.final().copy(out, off);
+}
+function decryptEcbInto(cipher, key, out) {
+  const d = (0, import_crypto.createDecipheriv)("aes-128-ecb", key, null);
+  d.setAutoPadding(true);
+  let off = 0;
+  const CHUNK = 1 << 20;
+  while (cipher.length - off > CHUNK) {
+    off += d.update(cipher.subarray(off, off + CHUNK)).copy(out, off);
+  }
+  off += d.update(cipher.subarray(off)).copy(out, off);
+  return off + d.final().copy(out, off);
 }
 function downloadUrl(cdnBase, encParam) {
   return `${cdnBase.replace(/\/$/, "")}/download?encrypted_query_param=${encodeURIComponent(encParam)}`;
@@ -110,7 +109,12 @@ function detectImageExt(b) {
   return "jpg";
 }
 function md5Hex(b) {
-  return (0, import_crypto.createHash)("md5").update(b).digest("hex");
+  const h = (0, import_crypto.createHash)("md5");
+  const CHUNK = 1 << 20;
+  for (let off = 0; off < b.length; off += CHUNK) {
+    h.update(b.subarray(off, Math.min(off + CHUNK, b.length)));
+  }
+  return h.digest("hex");
 }
 function ecbPaddedSize(plainLen) {
   if (plainLen < 0) return 0;
@@ -1035,8 +1039,12 @@ var IlinkClient = class {
             failures.push({ kind, name, reason: `too large (${(r.body.byteLength / 1048576).toFixed(1)}MB, limit 100MB)` });
             return;
           }
-          let buf = Buffer.from(r.body);
-          if (key) buf = decryptEcb(buf, key);
+          let buf = r.body instanceof Uint8Array ? Buffer.from(r.body.buffer, r.body.byteOffset, r.body.byteLength) : Buffer.from(r.body);
+          if (key) {
+            const out = Buffer.allocUnsafe(buf.length);
+            const n = decryptEcbInto(buf, key, out);
+            buf = out.subarray(0, n);
+          }
           if (kind === "audio" && isSilk2(buf)) {
             const wav = await silkToWav(buf).catch(() => null);
             if (wav) {
@@ -1353,40 +1361,11 @@ function buildMediaItem(att, ref) {
   }
 }
 
-// src/core/transport-obsidian.ts
-var import_obsidian = require("obsidian");
-var ObsidianTransport = class {
-  async get(url, headers, timeoutMs) {
-    return this.run("GET", url, headers, void 0, timeoutMs);
-  }
-  async post(url, headers, body, timeoutMs) {
-    return this.run("POST", url, headers, body, timeoutMs);
-  }
-  async run(method, url, headers, body, timeoutMs) {
-    let timer = null;
-    const timeoutPromise = new Promise((_, reject) => {
-      timer = window.setTimeout(() => reject(new HttpError("request timeout", 0, true)), timeoutMs);
-    });
-    try {
-      const resp = await Promise.race([
-        (0, import_obsidian.requestUrl)({ url, method, headers, body, throw: false }),
-        timeoutPromise
-      ]);
-      return { status: resp.status, body: resp.arrayBuffer, headers: lowerHeaders(resp.headers) };
-    } catch (e) {
-      if (e instanceof HttpError) throw e;
-      const msg = String(e?.message ?? e);
-      throw new HttpError(msg, 0, /abort|timeout|timed out/i.test(msg));
-    } finally {
-      if (timer) window.clearTimeout(timer);
-    }
-  }
-};
-
 // src/core/transport-node.ts
 var http = __toESM(require("http"));
 var https = __toESM(require("https"));
 var MAX_REDIRECTS = 5;
+var MAX_RESPONSE_BYTES = 105 * 1024 * 1024;
 var NodeTransport = class {
   async get(url, headers, timeoutMs) {
     return this.request("GET", url, headers, void 0, timeoutMs, 0);
@@ -1444,16 +1423,27 @@ var NodeTransport = class {
             }
           }
           const chunks = [];
+          let received = 0;
           res.on("data", (c) => {
             arm();
+            received += c.length;
+            if (received > MAX_RESPONSE_BYTES) {
+              req.destroy(new HttpError("response too large", status));
+              return;
+            }
             chunks.push(c);
           });
           res.on("error", (e) => settle(() => reject(new HttpError(String(e?.message ?? e), status))));
           res.on("end", () => {
             settle(() => {
-              const buf = Buffer.concat(chunks);
-              const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
-              resolve({ status, body: ab, headers: flatHeaders(res.headers) });
+              let body2;
+              if (chunks.length === 1) {
+                const c = chunks[0];
+                body2 = c.byteLength === c.buffer.byteLength && c.byteOffset === 0 ? c : Buffer.from(c);
+              } else {
+                body2 = Buffer.concat(chunks);
+              }
+              resolve({ status, body: body2, headers: flatHeaders(res.headers) });
             });
           });
         }
@@ -1589,7 +1579,7 @@ var StateStore = class {
 };
 
 // src/core/importer.ts
-var import_obsidian3 = require("obsidian");
+var import_obsidian2 = require("obsidian");
 
 // src/core/article.ts
 var UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36";
@@ -1629,23 +1619,28 @@ async function fetchArticle(transport, url, parseHtml) {
 function accountName(doc) {
   return doc.querySelector("#js_name")?.textContent?.trim() ?? "";
 }
+var IMAGE_CONCURRENCY = 3;
 async function downloadImages(transport, images) {
-  for (const img of images) {
-    for (let attempt = 0; attempt < 2 && !img.data; attempt++) {
-      if (attempt > 0) await sleep2(1500);
-      try {
-        const resp = await transport.get(img.url, { "User-Agent": UA }, 2e4);
-        if (resp.status === 200) {
-          img.data = new Uint8Array(resp.body);
-        } else {
-          console.warn(`wechatian: article image HTTP ${resp.status}: ${img.url}`);
+  let next = 0;
+  const worker = async () => {
+    while (next < images.length) {
+      const img = images[next++];
+      for (let attempt = 0; attempt < 2 && !img.data; attempt++) {
+        if (attempt > 0) await sleep2(1500);
+        try {
+          const resp = await transport.get(img.url, { "User-Agent": UA }, 2e4);
+          if (resp.status === 200) {
+            img.data = new Uint8Array(resp.body);
+          } else {
+            console.warn(`wechatian: article image HTTP ${resp.status}: ${img.url}`);
+          }
+        } catch (e) {
+          console.warn(`wechatian: article image download failed: ${String(e?.message ?? e)}`, img.url);
         }
-      } catch (e) {
-        console.warn(`wechatian: article image download failed: ${String(e?.message ?? e)}`, img.url);
       }
     }
-    await sleep2(400);
-  }
+  };
+  await Promise.all(Array.from({ length: Math.min(IMAGE_CONCURRENCY, images.length) }, worker));
 }
 function sleep2(ms) {
   return new Promise((r) => window.setTimeout(r, ms));
@@ -1756,7 +1751,7 @@ function imageExt(src) {
 }
 
 // src/i18n.ts
-var import_obsidian2 = require("obsidian");
+var import_obsidian = require("obsidian");
 var en = {
   "cmd.connect": "Connect WeChat",
   "cmd.disconnect": "Disconnect WeChat",
@@ -2065,7 +2060,7 @@ var tw = {
 };
 function detectDict() {
   try {
-    const lang = (0, import_obsidian2.getLanguage)().toLowerCase();
+    const lang = (0, import_obsidian.getLanguage)().toLowerCase();
     if (lang.startsWith("zh")) {
       return lang.includes("tw") || lang.includes("hk") || lang.includes("hant") ? tw : zh;
     }
@@ -2178,7 +2173,7 @@ async function ensureFolder(app, folder) {
       await app.vault.createFolder(cur);
     }
   }
-  void import_obsidian3.TFolder;
+  void import_obsidian2.TFolder;
 }
 async function importMessage(app, transport, msg, settings) {
   const result = {
@@ -2429,7 +2424,7 @@ async function ensureAgentGuide(app, s, lang) {
 }
 
 // src/settings.ts
-var import_obsidian4 = require("obsidian");
+var import_obsidian3 = require("obsidian");
 
 // src/core/qrlogin.ts
 var QR_POLL_TIMEOUT = 35e3;
@@ -2912,7 +2907,7 @@ var DEFAULT_SETTINGS = {
   autoReply: true
 };
 var FOLDER_KEYS = ["inboxFolder", "attachmentFolder", "articleFolder", "outboxFolder"];
-var WechatianSettingTab = class extends import_obsidian4.PluginSettingTab {
+var WechatianSettingTab = class extends import_obsidian3.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
     this.plugin = plugin;
@@ -2926,6 +2921,7 @@ var WechatianSettingTab = class extends import_obsidian4.PluginSettingTab {
     return this.plugin.settings[key];
   }
   setControlValue(key, value) {
+    if (FOLDER_KEYS.includes(key) && typeof value === "string") value = (0, import_obsidian3.normalizePath)(value);
     this.plugin.settings[key] = value;
     if (key === "language") {
       this.plugin.applyLanguage(value);
@@ -3022,7 +3018,7 @@ var WechatianSettingTab = class extends import_obsidian4.PluginSettingTab {
     const st = this.plugin.getState();
     const section = containerEl.createDiv({ cls: "wechatian-login-section" });
     if (st?.token) {
-      new import_obsidian4.Setting(section).setName(t("login.status")).setDesc(t("login.bound", { bot: st.botId || "?", user: st.scannedUser || "?" })).addButton(
+      new import_obsidian3.Setting(section).setName(t("login.status")).setDesc(t("login.bound", { bot: st.botId || "?", user: st.scannedUser || "?" })).addButton(
         (b) => b.setButtonText(t("login.rescan")).onClick(() => {
           void this.startInlineLogin(section);
         })
@@ -3030,12 +3026,12 @@ var WechatianSettingTab = class extends import_obsidian4.PluginSettingTab {
         (b) => b.setButtonText(t("login.logout")).setDestructive().onClick(async () => {
           this.plugin.disconnect();
           this.plugin.clearCredentials();
-          new import_obsidian4.Notice(t("notice.loggedOut"));
+          new import_obsidian3.Notice(t("notice.loggedOut"));
           this.update();
         })
       );
       let testInput = null;
-      new import_obsidian4.Setting(section).setName(t("sendTest.name")).setDesc(t("sendTest.desc")).addText((txt) => {
+      new import_obsidian3.Setting(section).setName(t("sendTest.name")).setDesc(t("sendTest.desc")).addText((txt) => {
         txt.setPlaceholder(t("sendTest.placeholder")).setValue("Hello from wechatian");
         txt.inputEl.addClass("wechatian-send-input");
         testInput = txt;
@@ -3044,16 +3040,16 @@ var WechatianSettingTab = class extends import_obsidian4.PluginSettingTab {
         b.onClick(async () => {
           const text = (testInput?.getValue() ?? "").trim();
           if (!text) {
-            new import_obsidian4.Notice(t("sendTest.empty"));
+            new import_obsidian3.Notice(t("sendTest.empty"));
             return;
           }
           b.setDisabled(true);
           const res = await this.plugin.sendTestMessage(text);
           b.setDisabled(false);
           if (res.ok) {
-            new import_obsidian4.Notice(t("sendTest.ok"));
+            new import_obsidian3.Notice(t("sendTest.ok"));
           } else {
-            new import_obsidian4.Notice(t("sendTest.failed", { err: buildSendFailure(res.errmsg, res.ret) }), 1e4);
+            new import_obsidian3.Notice(t("sendTest.failed", { err: buildSendFailure(res.errmsg, res.ret) }), 1e4);
           }
         });
       });
@@ -3084,7 +3080,7 @@ var WechatianSettingTab = class extends import_obsidian4.PluginSettingTab {
     if (!this.alive) return;
     if (out) {
       this.plugin.applyLogin(out);
-      new import_obsidian4.Notice(t("notice.loggedIn"));
+      new import_obsidian3.Notice(t("notice.loggedIn"));
       this.update();
     }
   }
@@ -3119,8 +3115,8 @@ var WechatianSettingTab = class extends import_obsidian4.PluginSettingTab {
 };
 
 // src/qr-modal.ts
-var import_obsidian5 = require("obsidian");
-var QrLoginModal = class extends import_obsidian5.Modal {
+var import_obsidian4 = require("obsidian");
+var QrLoginModal = class extends import_obsidian4.Modal {
   constructor(app, transport, baseUrl, onDone) {
     super(app);
     this.transport = transport;
@@ -3197,6 +3193,8 @@ var Outbox = class {
   constructor(app) {
     this.app = app;
   }
+  /** sidecar path -> content last written; skips byte-identical rewrites (iCloud churn) */
+  sidecarWritten = /* @__PURE__ */ new Map();
   /**
    * Scan and process all pending-send files; returns the processed count.
    * This is a one-to-one channel: every file is delivered to the account that
@@ -3291,9 +3289,12 @@ var Outbox = class {
 
 ${buildSendFailure(res.errmsg, res.ret, contextToken)}
 `;
-    try {
-      await this.app.vault.adapter.write(notePath, note);
-    } catch {
+    if (this.sidecarWritten.get(notePath) !== note) {
+      try {
+        await this.app.vault.adapter.write(notePath, note);
+        this.sidecarWritten.set(notePath, note);
+      } catch {
+      }
     }
     return 0;
   }
@@ -3336,20 +3337,18 @@ var CDN_BASE = "https://novac2c.cdn.weixin.qq.com/c2c";
 // src/main.ts
 var LEGACY_STATE_FILE = ".wechatian-plugin/state.json";
 var TICKET_TTL_MS = 24 * 36e5;
-var WechatianPlugin = class extends import_obsidian6.Plugin {
+var WechatianPlugin = class extends import_obsidian5.Plugin {
   settings = DEFAULT_SETTINGS;
   store;
   client = null;
-  transport = new ObsidianTransport();
-  /** article/image fetches run on Node's http stack: requestUrl's IPC channel has no
-   *  timeout/cancel and can wedge the app on misbehaving hosts (issue #1) */
-  articleTransport = new NodeTransport();
+  /** all HTTP (gateway poll/send, CDN media, article fetches) runs on Node's http stack:
+   *  requestUrl's IPC channel cannot abort or stream 100MB media safely (issue #1) */
+  transport = new NodeTransport();
   polling = false;
   stopRequested = false;
   connState = "disconnected";
   statusBar = null;
   outbox = null;
-  statusListeners = /* @__PURE__ */ new Set();
   /** command id -> i18n key, so names can be re-rendered when the language changes */
   commandNameKeys = {};
   async onload() {
@@ -3378,7 +3377,7 @@ var WechatianPlugin = class extends import_obsidian6.Plugin {
         void this.startPollLoop();
       } else if (this.settings.enabled) {
         this.setConn("disconnected");
-        new import_obsidian6.Notice(t("notice.notLoggedIn", { cmd: t("cmd.login") }));
+        new import_obsidian5.Notice(t("notice.notLoggedIn", { cmd: t("cmd.login") }));
       }
     });
   }
@@ -3392,6 +3391,9 @@ var WechatianPlugin = class extends import_obsidian6.Plugin {
       delete raw.sentFolder;
     }
     this.settings = Object.assign({}, DEFAULT_SETTINGS, raw ?? {});
+    for (const key of FOLDER_KEYS) {
+      this.settings[key] = (0, import_obsidian5.normalizePath)(this.settings[key]);
+    }
   }
   async saveSettings() {
     await this.saveData(this.settings);
@@ -3438,19 +3440,6 @@ var WechatianPlugin = class extends import_obsidian6.Plugin {
   setConn(s) {
     this.connState = s;
     this.renderStatus();
-    for (const fn of this.statusListeners) {
-      try {
-        fn();
-      } catch {
-      }
-    }
-  }
-  /** Subscribe to connection-state changes (used by the settings page) */
-  onStatusChange(fn) {
-    this.statusListeners.add(fn);
-    return () => {
-      this.statusListeners.delete(fn);
-    };
   }
   /** Current connection state */
   getConnState() {
@@ -3504,14 +3493,14 @@ var WechatianPlugin = class extends import_obsidian6.Plugin {
   startLogin() {
     new QrLoginModal(this.app, this.transport, ILINK_DEFAULT_BASE, (out) => {
       this.applyLogin(out);
-      new import_obsidian6.Notice(t("notice.loggedIn"));
+      new import_obsidian5.Notice(t("notice.loggedIn"));
     }).open();
   }
   /** Disconnect and clear login credentials */
   async logout() {
     this.disconnect();
     this.clearCredentials();
-    new import_obsidian6.Notice(t("notice.loggedOut"));
+    new import_obsidian5.Notice(t("notice.loggedOut"));
   }
   /** Connect directly with the stored token */
   async connect() {
@@ -3586,7 +3575,7 @@ var WechatianPlugin = class extends import_obsidian6.Plugin {
           }
         });
         this.setConn("expired");
-        new import_obsidian6.Notice(t("notice.sessionExpired"));
+        new import_obsidian5.Notice(t("notice.sessionExpired"));
         await sleep(3e4);
         continue;
       }
@@ -3652,13 +3641,13 @@ var WechatianPlugin = class extends import_obsidian6.Plugin {
     }
     if (this.settings.notifyOnMessage) {
       const preview = msg.text.slice(0, 40) || `[${t("notice.attachments", { n: msg.attachments.length })}]`;
-      new import_obsidian6.Notice(`${t("notice.prefix")}: ${preview}`);
+      new import_obsidian5.Notice(`${t("notice.prefix")}: ${preview}`);
     }
     await this.showTyping(msg.from, tok);
     if (this.settings.autoImport) {
       let result = null;
       try {
-        result = await importMessage(this.app, this.articleTransport, msg, {
+        result = await importMessage(this.app, this.transport, msg, {
           inboxFolder: this.settings.inboxFolder,
           attachmentFolder: this.settings.attachmentFolder,
           articleFolder: this.settings.articleFolder,
@@ -3666,7 +3655,7 @@ var WechatianPlugin = class extends import_obsidian6.Plugin {
           groupArticlesByAccount: this.settings.groupArticlesByAccount
         });
       } catch (e) {
-        new import_obsidian6.Notice(t("notice.importFailed", { err: String(e?.message ?? e) }));
+        new import_obsidian5.Notice(t("notice.importFailed", { err: String(e?.message ?? e) }));
       }
       if (this.settings.autoReply) {
         return [
@@ -3707,7 +3696,7 @@ var WechatianPlugin = class extends import_obsidian6.Plugin {
           ...quoteBlock(lines.join("\n"))
         ]);
       } else if (this.settings.notifyOnMessage) {
-        new import_obsidian6.Notice(t("sendTest.failed", { err: buildSendFailure(res.errmsg, res.ret, contextToken) }), 1e4);
+        new import_obsidian5.Notice(t("sendTest.failed", { err: buildSendFailure(res.errmsg, res.ret, contextToken) }), 1e4);
       }
     } catch {
     }
@@ -3769,10 +3758,10 @@ var WechatianPlugin = class extends import_obsidian6.Plugin {
     const today = `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
     const path = `${this.settings.inboxFolder}/${today}.md`;
     const file = this.app.vault.getAbstractFileByPath(path);
-    if (file instanceof import_obsidian6.TFile) {
+    if (file instanceof import_obsidian5.TFile) {
       await this.app.workspace.getLeaf().openFile(file);
     } else {
-      new import_obsidian6.Notice(t("notice.noMsgToday", { path }));
+      new import_obsidian5.Notice(t("notice.noMsgToday", { path }));
     }
   }
 };

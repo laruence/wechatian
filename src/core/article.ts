@@ -84,27 +84,34 @@ function accountName(doc: Document): string {
 }
 
 /**
- * Download every collected image, sequentially with a short pause between
- * requests (the CDN throttles bursts). One retry per image; failures keep the
- * remote link and are logged so the cause shows up in the developer console.
+ * Download every collected image through a small worker pool (3 in flight).
+ * The pool size is the throttle for the throttling CDN; one retry per image
+ * (with a pause before the retry). Failures keep the remote link and are
+ * logged so the cause shows up in the developer console.
  */
+const IMAGE_CONCURRENCY = 3;
+
 async function downloadImages(transport: HttpTransport, images: ArticleImage[]): Promise<void> {
-  for (const img of images) {
-    for (let attempt = 0; attempt < 2 && !img.data; attempt++) {
-      if (attempt > 0) await sleep(1500);
-      try {
-        const resp = await transport.get(img.url, { 'User-Agent': UA }, 20_000);
-        if (resp.status === 200) {
-          img.data = new Uint8Array(resp.body);
-        } else {
-          console.warn(`wechatian: article image HTTP ${resp.status}: ${img.url}`);
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    while (next < images.length) {
+      const img = images[next++];
+      for (let attempt = 0; attempt < 2 && !img.data; attempt++) {
+        if (attempt > 0) await sleep(1500);
+        try {
+          const resp = await transport.get(img.url, { 'User-Agent': UA }, 20_000);
+          if (resp.status === 200) {
+            img.data = new Uint8Array(resp.body);
+          } else {
+            console.warn(`wechatian: article image HTTP ${resp.status}: ${img.url}`);
+          }
+        } catch (e) {
+          console.warn(`wechatian: article image download failed: ${String((e as Error)?.message ?? e)}`, img.url);
         }
-      } catch (e) {
-        console.warn(`wechatian: article image download failed: ${String((e as Error)?.message ?? e)}`, img.url);
       }
     }
-    await sleep(400);
-  }
+  };
+  await Promise.all(Array.from({ length: Math.min(IMAGE_CONCURRENCY, images.length) }, worker));
 }
 
 function sleep(ms: number): Promise<void> {

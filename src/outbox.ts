@@ -10,6 +10,9 @@ import { buildSendFailure, t } from './i18n';
 const IMAGE_EXTS = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp']);
 
 export class Outbox {
+  /** sidecar path -> content last written; skips byte-identical rewrites (iCloud churn) */
+  private sidecarWritten = new Map<string, string>();
+
   constructor(private app: App) {}
 
   /**
@@ -135,13 +138,16 @@ export class Outbox {
     // Failure: record a categorized reason + fix hint in a sidecar note, visible without blocking retries
     const notePath = `${path}.wechatian-failed.md`;
     const note = `# ${name}\n\n${buildSendFailure(res.errmsg, res.ret, contextToken)}\n`;
-    try {
-      // overwrite (not append), and the content is deterministic: once the
-      // failure is recorded, every later flush writes byte-identical content,
-      // which saveNow-style churn guards can treat as unchanged
-      await this.app.vault.adapter.write(notePath, note);
-    } catch {
-      /* a missing sidecar is cosmetic; the file itself still survives for retry */
+    if (this.sidecarWritten.get(notePath) !== note) {
+      try {
+        // overwrite (not append); the content is deterministic, so while the
+        // failure persists every flush would write byte-identical content —
+        // skip those rewrites (each one makes iCloud fork a conflict copy)
+        await this.app.vault.adapter.write(notePath, note);
+        this.sidecarWritten.set(notePath, note);
+      } catch {
+        /* a missing sidecar is cosmetic; the file itself still survives for retry */
+      }
     }
     return 0;
   }

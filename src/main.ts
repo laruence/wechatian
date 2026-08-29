@@ -2,7 +2,6 @@
 import { normalizePath, Notice, Plugin, TFile } from 'obsidian';
 import { IlinkClient, type PollResult, sleep } from './core/ilink';
 import type { InboundMessage } from './core/types';
-import { ObsidianTransport } from './core/transport-obsidian';
 import { NodeTransport } from './core/transport-node';
 import { StateStore, type BotState } from './core/store';
 import { appendOutbound, ensureFolder, importMessage, quoteBlock, timeOfDay, type ImportResult } from './core/importer';
@@ -28,10 +27,9 @@ export default class WechatianPlugin extends Plugin {
   settings: WechatianSettings = DEFAULT_SETTINGS;
   store!: StateStore;
   private client: IlinkClient | null = null;
-  private transport = new ObsidianTransport();
-  /** article/image fetches run on Node's http stack: requestUrl's IPC channel has no
-   *  timeout/cancel and can wedge the app on misbehaving hosts (issue #1) */
-  private articleTransport = new NodeTransport();
+  /** all HTTP (gateway poll/send, CDN media, article fetches) runs on Node's http stack:
+   *  requestUrl's IPC channel cannot abort or stream 100MB media safely (issue #1) */
+  private transport = new NodeTransport();
   private polling = false;
   private stopRequested = false;
   private connState: ConnState = 'disconnected';
@@ -165,7 +163,7 @@ export default class WechatianPlugin extends Plugin {
   }
 
   /** HTTP transport layer (used for scanning in the settings page) */
-  getTransport(): ObsidianTransport {
+  getTransport(): NodeTransport {
     return this.transport;
   }
 
@@ -406,7 +404,7 @@ export default class WechatianPlugin extends Plugin {
     if (this.settings.autoImport) {
       let result: ImportResult | null = null;
       try {
-        result = await importMessage(this.app, this.articleTransport, msg, {
+        result = await importMessage(this.app, this.transport, msg, {
           inboxFolder: this.settings.inboxFolder,
           attachmentFolder: this.settings.attachmentFolder,
           articleFolder: this.settings.articleFolder,

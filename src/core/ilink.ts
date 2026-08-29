@@ -5,7 +5,7 @@
  */
 import type { HttpTransport } from './http';
 import { bodyJson, bodyText, HttpError } from './http';
-import { downloadUrl, parseAesKey, decryptEcb, encryptEcbInto, md5Hex, ecbPaddedSize } from './crypto';
+import { downloadUrl, parseAesKey, decryptEcbInto, encryptEcbInto, md5Hex, ecbPaddedSize } from './crypto';
 import { isSilk, silkToWav } from './silk';
 import {
   type AttachmentFailure,
@@ -176,8 +176,19 @@ export class IlinkClient {
               failures.push({ kind, name, reason: `too large (${(r.body.byteLength / 1048576).toFixed(1)}MB, limit 100MB)` });
               return;
             }
-            let buf: Buffer = Buffer.from(r.body);
-            if (key) buf = decryptEcb(buf, key);
+            // body is either a raw ArrayBuffer or a transport-owned Uint8Array
+            // view; wrap it without copying either way. Decryption writes into a
+            // fresh buffer, so the attachment never shares backing memory with
+            // the transport's read buffer.
+            let buf: Buffer =
+              r.body instanceof Uint8Array
+                ? Buffer.from(r.body.buffer, r.body.byteOffset, r.body.byteLength)
+                : Buffer.from(r.body);
+            if (key) {
+              const out = Buffer.allocUnsafe(buf.length);
+              const n = decryptEcbInto(buf, key, out);
+              buf = out.subarray(0, n);
+            }
             // Voice arrives as WeChat SILK, which no player renders. Transcode
             // to WAV in-plugin so the note embed is playable. On any failure we
             // fall back to the raw .silk so the audio is never lost.
@@ -378,9 +389,9 @@ export class IlinkClient {
     // Encrypt into one precisely-sized buffer (md5 reads the view directly,
     // so there is no extra plaintext copy). allocUnsafeSlow never uses the
     // small-buffer pool, so cipher.buffer IS exactly the ciphertext for any
-    // size and uploadCipher can hand it to the transport without slicing out
-    // a second full-size copy — for a 100MB upload the peak stays at ~200MB
-    // instead of ~300MB.
+    // size and uploadCipher can hand it to the transport without allocating
+    // a second full-size buffer — the transport's own write copy aside, the
+    // peak for a 100MB upload stays at ~200MB instead of ~300MB.
     const plain = Buffer.from(att.data.buffer, att.data.byteOffset, att.data.byteLength);
     const cipher = Buffer.allocUnsafeSlow(ecbPaddedSize(plain.length));
     encryptEcbInto(plain, key, cipher);
