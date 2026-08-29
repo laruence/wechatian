@@ -307,6 +307,18 @@ export default class WechatianPlugin extends Plugin {
         continue;
       }
 
+      if (result.resetCursor) {
+        // gateway rejected the stored cursor (412) but the session itself is
+        // fine: resume with an empty cursor right away — no user action needed
+        store.update((s) => {
+          s.cursor = '';
+          s.lastError = '';
+        });
+        this.setConn('connecting');
+        backoff = 1000;
+        continue;
+      }
+
       if (result.error) {
         store.update((s) => {
           s.lastError = result.error ?? '';

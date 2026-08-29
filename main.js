@@ -994,7 +994,10 @@ var IlinkClient = class {
       if (e instanceof HttpError && e.timeout) {
         return { messages: [], sessionExpired: false };
       }
-      if (e instanceof HttpError && (e.status === 412 || e.status === 401 || e.status === 403)) {
+      if (e instanceof HttpError && e.status === 412) {
+        return { messages: [], sessionExpired: false, resetCursor: true };
+      }
+      if (e instanceof HttpError && (e.status === 401 || e.status === 403)) {
         return { messages: [], sessionExpired: true };
       }
       return { messages: [], sessionExpired: false, error: String(e?.message ?? e) };
@@ -3580,6 +3583,15 @@ var WechatianPlugin = class extends import_obsidian5.Plugin {
         this.setConn("expired");
         new import_obsidian5.Notice(t("notice.sessionExpired"));
         await sleep(3e4);
+        continue;
+      }
+      if (result.resetCursor) {
+        store.update((s) => {
+          s.cursor = "";
+          s.lastError = "";
+        });
+        this.setConn("connecting");
+        backoff = 1e3;
         continue;
       }
       if (result.error) {

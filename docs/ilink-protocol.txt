@@ -55,11 +55,13 @@ receiving
   Server holds ~35s; client timeout should exceed it (wechatian: 45s).
   Client timeout = normal, loop again. Response carries new cursor in
   get_updates_buf (empty = keep old).
-  HTTP 412/401/403 = gateway rejects the session (stale/superseded cursor or
-  token). Observed after an app restart: the stored cursor started returning
-  412 while the same request replayed from a CLI got 200. Treat as session
-  expiry (re-scan), never as a retryable error — retrying the same cursor
-  forever changes nothing.
+  HTTP 412 = the gateway rejects the stored cursor, but the session itself is
+  still good: an empty-cursor poll re-establishes the stream (verified live:
+  old cursor -> 412, same request with "" -> 200 + fresh cursor + sync_buf).
+  On 412, clear the stored cursor and re-poll with "". 401/403 instead point
+  at the credentials themselves: only a QR re-scan fixes those. Retrying the
+  rejected cursor forever changes nothing (observed stuck loop: status bar
+  "error http 412" for minutes while messages queued server-side).
 
   message fields:
     message_type   1 = user, 2 = bot itself (skip)

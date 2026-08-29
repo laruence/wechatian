@@ -448,12 +448,20 @@ function isSilkView(u: Uint8Array): boolean {
 
 /* ------------------------------------------------------------- poll */
 
-test('poll: gateway session rejection (412) surfaces as sessionExpired, not a retryable error', async () => {
+test('poll: gateway cursor rejection (412) signals a cursor reset, not death', async () => {
   const transport = new StubTransport();
   const client = new IlinkClient(transport, { baseUrl: 'https://gw.example', cdnBase: 'https://cdn.example' }, 'bottoken');
   transport.response = { status: 412, body: '' };
   const r = await client.poll('somecursor');
-  assert.deepEqual(r, { messages: [], sessionExpired: true }, 'the loop must stop hammering a dead cursor');
+  assert.deepEqual(r, { messages: [], sessionExpired: false, resetCursor: true });
+});
+
+test('poll: 401/403 are credential-level: session expired, re-scan required', async () => {
+  const transport = new StubTransport();
+  const client = new IlinkClient(transport, { baseUrl: 'https://gw.example', cdnBase: 'https://cdn.example' }, 'bottoken');
+  transport.response = { status: 401, body: '' };
+  const r = await client.poll('somecursor');
+  assert.equal(r.sessionExpired, true);
 });
 
 test('poll: other http errors stay retryable', async () => {
