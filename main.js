@@ -33,7 +33,7 @@ __export(main_exports, {
   default: () => WechatianPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian5 = require("obsidian");
+var import_obsidian6 = require("obsidian");
 
 // src/core/http.ts
 var HttpError = class extends Error {
@@ -60,6 +60,13 @@ async function bodyTextAuto(r) {
 }
 function bodyJson(r) {
   return JSON.parse(bodyText(r));
+}
+function lowerHeaders(headers) {
+  const out = {};
+  if (headers) {
+    for (const [k, v] of Object.entries(headers)) out[k.toLowerCase()] = v;
+  }
+  return out;
 }
 
 // src/core/crypto.ts
@@ -1367,6 +1374,36 @@ function buildMediaItem(att, ref) {
   }
 }
 
+// src/core/transport-obsidian.ts
+var import_obsidian = require("obsidian");
+var ObsidianTransport = class {
+  async get(url, headers, timeoutMs) {
+    return this.run("GET", url, headers, void 0, timeoutMs);
+  }
+  async post(url, headers, body, timeoutMs) {
+    return this.run("POST", url, headers, body, timeoutMs);
+  }
+  async run(method, url, headers, body, timeoutMs) {
+    let timer = null;
+    const timeoutPromise = new Promise((_, reject) => {
+      timer = window.setTimeout(() => reject(new HttpError("request timeout", 0, true)), timeoutMs);
+    });
+    try {
+      const resp = await Promise.race([
+        (0, import_obsidian.requestUrl)({ url, method, headers, body, throw: false }),
+        timeoutPromise
+      ]);
+      return { status: resp.status, body: resp.arrayBuffer, headers: lowerHeaders(resp.headers) };
+    } catch (e) {
+      if (e instanceof HttpError) throw e;
+      const msg = String(e?.message ?? e);
+      throw new HttpError(msg, 0, /abort|timeout|timed out/i.test(msg));
+    } finally {
+      if (timer) window.clearTimeout(timer);
+    }
+  }
+};
+
 // src/core/transport-node.ts
 var http = __toESM(require("http"));
 var https = __toESM(require("https"));
@@ -1585,7 +1622,7 @@ var StateStore = class {
 };
 
 // src/core/importer.ts
-var import_obsidian2 = require("obsidian");
+var import_obsidian3 = require("obsidian");
 
 // src/core/article.ts
 var UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36";
@@ -1757,7 +1794,7 @@ function imageExt(src) {
 }
 
 // src/i18n.ts
-var import_obsidian = require("obsidian");
+var import_obsidian2 = require("obsidian");
 var en = {
   "cmd.connect": "Connect WeChat",
   "cmd.disconnect": "Disconnect WeChat",
@@ -2066,7 +2103,7 @@ var tw = {
 };
 function detectDict() {
   try {
-    const lang = (0, import_obsidian.getLanguage)().toLowerCase();
+    const lang = (0, import_obsidian2.getLanguage)().toLowerCase();
     if (lang.startsWith("zh")) {
       return lang.includes("tw") || lang.includes("hk") || lang.includes("hant") ? tw : zh;
     }
@@ -2179,7 +2216,7 @@ async function ensureFolder(app, folder) {
       await app.vault.createFolder(cur);
     }
   }
-  void import_obsidian2.TFolder;
+  void import_obsidian3.TFolder;
 }
 async function importMessage(app, transport, msg, settings) {
   const result = {
@@ -2430,7 +2467,7 @@ async function ensureAgentGuide(app, s, lang) {
 }
 
 // src/settings.ts
-var import_obsidian3 = require("obsidian");
+var import_obsidian4 = require("obsidian");
 
 // src/core/qrlogin.ts
 var QR_POLL_TIMEOUT = 35e3;
@@ -2913,7 +2950,7 @@ var DEFAULT_SETTINGS = {
   autoReply: true
 };
 var FOLDER_KEYS = ["inboxFolder", "attachmentFolder", "articleFolder", "outboxFolder"];
-var WechatianSettingTab = class extends import_obsidian3.PluginSettingTab {
+var WechatianSettingTab = class extends import_obsidian4.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
     this.plugin = plugin;
@@ -2927,7 +2964,7 @@ var WechatianSettingTab = class extends import_obsidian3.PluginSettingTab {
     return this.plugin.settings[key];
   }
   setControlValue(key, value) {
-    if (FOLDER_KEYS.includes(key) && typeof value === "string") value = (0, import_obsidian3.normalizePath)(value);
+    if (FOLDER_KEYS.includes(key) && typeof value === "string") value = (0, import_obsidian4.normalizePath)(value);
     this.plugin.settings[key] = value;
     if (key === "language") {
       this.plugin.applyLanguage(value);
@@ -3024,7 +3061,7 @@ var WechatianSettingTab = class extends import_obsidian3.PluginSettingTab {
     const st = this.plugin.getState();
     const section = containerEl.createDiv({ cls: "wechatian-login-section" });
     if (st?.token) {
-      new import_obsidian3.Setting(section).setName(t("login.status")).setDesc(t("login.bound", { bot: st.botId || "?", user: st.scannedUser || "?" })).addButton(
+      new import_obsidian4.Setting(section).setName(t("login.status")).setDesc(t("login.bound", { bot: st.botId || "?", user: st.scannedUser || "?" })).addButton(
         (b) => b.setButtonText(t("login.rescan")).onClick(() => {
           void this.startInlineLogin(section);
         })
@@ -3032,12 +3069,12 @@ var WechatianSettingTab = class extends import_obsidian3.PluginSettingTab {
         (b) => b.setButtonText(t("login.logout")).setDestructive().onClick(async () => {
           this.plugin.disconnect();
           this.plugin.clearCredentials();
-          new import_obsidian3.Notice(t("notice.loggedOut"));
+          new import_obsidian4.Notice(t("notice.loggedOut"));
           this.update();
         })
       );
       let testInput = null;
-      new import_obsidian3.Setting(section).setName(t("sendTest.name")).setDesc(t("sendTest.desc")).addText((txt) => {
+      new import_obsidian4.Setting(section).setName(t("sendTest.name")).setDesc(t("sendTest.desc")).addText((txt) => {
         txt.setPlaceholder(t("sendTest.placeholder")).setValue("Hello from wechatian");
         txt.inputEl.addClass("wechatian-send-input");
         testInput = txt;
@@ -3046,16 +3083,16 @@ var WechatianSettingTab = class extends import_obsidian3.PluginSettingTab {
         b.onClick(async () => {
           const text = (testInput?.getValue() ?? "").trim();
           if (!text) {
-            new import_obsidian3.Notice(t("sendTest.empty"));
+            new import_obsidian4.Notice(t("sendTest.empty"));
             return;
           }
           b.setDisabled(true);
           const res = await this.plugin.sendTestMessage(text);
           b.setDisabled(false);
           if (res.ok) {
-            new import_obsidian3.Notice(t("sendTest.ok"));
+            new import_obsidian4.Notice(t("sendTest.ok"));
           } else {
-            new import_obsidian3.Notice(t("sendTest.failed", { err: buildSendFailure(res.errmsg, res.ret) }), 1e4);
+            new import_obsidian4.Notice(t("sendTest.failed", { err: buildSendFailure(res.errmsg, res.ret) }), 1e4);
           }
         });
       });
@@ -3086,7 +3123,7 @@ var WechatianSettingTab = class extends import_obsidian3.PluginSettingTab {
     if (!this.alive) return;
     if (out) {
       this.plugin.applyLogin(out);
-      new import_obsidian3.Notice(t("notice.loggedIn"));
+      new import_obsidian4.Notice(t("notice.loggedIn"));
       this.update();
     }
   }
@@ -3121,8 +3158,8 @@ var WechatianSettingTab = class extends import_obsidian3.PluginSettingTab {
 };
 
 // src/qr-modal.ts
-var import_obsidian4 = require("obsidian");
-var QrLoginModal = class extends import_obsidian4.Modal {
+var import_obsidian5 = require("obsidian");
+var QrLoginModal = class extends import_obsidian5.Modal {
   constructor(app, transport, baseUrl, onDone) {
     super(app);
     this.transport = transport;
@@ -3343,13 +3380,18 @@ var CDN_BASE = "https://novac2c.cdn.weixin.qq.com/c2c";
 // src/main.ts
 var LEGACY_STATE_FILE = ".wechatian-plugin/state.json";
 var TICKET_TTL_MS = 24 * 36e5;
-var WechatianPlugin = class extends import_obsidian5.Plugin {
+var WechatianPlugin = class extends import_obsidian6.Plugin {
   settings = DEFAULT_SETTINGS;
   store;
   client = null;
-  /** all HTTP (gateway poll/send, CDN media, article fetches) runs on Node's http stack:
-   *  requestUrl's IPC channel cannot abort or stream 100MB media safely (issue #1) */
-  transport = new NodeTransport();
+  /** gateway + CDN traffic runs on requestUrl (Chromium's network stack).
+   * The ilink gateway rejects Node's http/https client at the TLS layer —
+   * every getupdates answers 412 no matter which headers we send, while the
+   * same request through requestUrl (or any Chromium/undici stack) passes.
+   * NodeTransport is kept for article fetches (mp.weixin.qq.com), where its
+   * real abort + idle timeout protects against slow-drip hosts. */
+  transport = new ObsidianTransport();
+  articleTransport = new NodeTransport();
   polling = false;
   stopRequested = false;
   connState = "disconnected";
@@ -3383,7 +3425,7 @@ var WechatianPlugin = class extends import_obsidian5.Plugin {
         void this.startPollLoop();
       } else if (this.settings.enabled) {
         this.setConn("disconnected");
-        new import_obsidian5.Notice(t("notice.notLoggedIn", { cmd: t("cmd.login") }));
+        new import_obsidian6.Notice(t("notice.notLoggedIn", { cmd: t("cmd.login") }));
       }
     });
   }
@@ -3398,7 +3440,7 @@ var WechatianPlugin = class extends import_obsidian5.Plugin {
     }
     this.settings = Object.assign({}, DEFAULT_SETTINGS, raw ?? {});
     for (const key of FOLDER_KEYS) {
-      this.settings[key] = (0, import_obsidian5.normalizePath)(this.settings[key]);
+      this.settings[key] = (0, import_obsidian6.normalizePath)(this.settings[key]);
     }
   }
   async saveSettings() {
@@ -3499,14 +3541,14 @@ var WechatianPlugin = class extends import_obsidian5.Plugin {
   startLogin() {
     new QrLoginModal(this.app, this.transport, ILINK_DEFAULT_BASE, (out) => {
       this.applyLogin(out);
-      new import_obsidian5.Notice(t("notice.loggedIn"));
+      new import_obsidian6.Notice(t("notice.loggedIn"));
     }).open();
   }
   /** Disconnect and clear login credentials */
   async logout() {
     this.disconnect();
     this.clearCredentials();
-    new import_obsidian5.Notice(t("notice.loggedOut"));
+    new import_obsidian6.Notice(t("notice.loggedOut"));
   }
   /** Connect directly with the stored token */
   async connect() {
@@ -3581,7 +3623,7 @@ var WechatianPlugin = class extends import_obsidian5.Plugin {
           }
         });
         this.setConn("expired");
-        new import_obsidian5.Notice(t("notice.sessionExpired"));
+        new import_obsidian6.Notice(t("notice.sessionExpired"));
         await sleep(3e4);
         continue;
       }
@@ -3591,6 +3633,7 @@ var WechatianPlugin = class extends import_obsidian5.Plugin {
           s.lastError = "";
         });
         this.setConn("connecting");
+        await sleep(2e3);
         backoff = 1e3;
         continue;
       }
@@ -3656,13 +3699,13 @@ var WechatianPlugin = class extends import_obsidian5.Plugin {
     }
     if (this.settings.notifyOnMessage) {
       const preview = msg.text.slice(0, 40) || `[${t("notice.attachments", { n: msg.attachments.length })}]`;
-      new import_obsidian5.Notice(`${t("notice.prefix")}: ${preview}`);
+      new import_obsidian6.Notice(`${t("notice.prefix")}: ${preview}`);
     }
     await this.showTyping(msg.from, tok);
     if (this.settings.autoImport) {
       let result = null;
       try {
-        result = await importMessage(this.app, this.transport, msg, {
+        result = await importMessage(this.app, this.articleTransport, msg, {
           inboxFolder: this.settings.inboxFolder,
           attachmentFolder: this.settings.attachmentFolder,
           articleFolder: this.settings.articleFolder,
@@ -3670,7 +3713,7 @@ var WechatianPlugin = class extends import_obsidian5.Plugin {
           groupArticlesByAccount: this.settings.groupArticlesByAccount
         });
       } catch (e) {
-        new import_obsidian5.Notice(t("notice.importFailed", { err: String(e?.message ?? e) }));
+        new import_obsidian6.Notice(t("notice.importFailed", { err: String(e?.message ?? e) }));
       }
       if (this.settings.autoReply) {
         return [
@@ -3711,7 +3754,7 @@ var WechatianPlugin = class extends import_obsidian5.Plugin {
           ...quoteBlock(lines.join("\n"))
         ]);
       } else if (this.settings.notifyOnMessage) {
-        new import_obsidian5.Notice(t("sendTest.failed", { err: buildSendFailure(res.errmsg, res.ret, contextToken) }), 1e4);
+        new import_obsidian6.Notice(t("sendTest.failed", { err: buildSendFailure(res.errmsg, res.ret, contextToken) }), 1e4);
       }
     } catch {
     }
@@ -3773,10 +3816,10 @@ var WechatianPlugin = class extends import_obsidian5.Plugin {
     const today = `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
     const path = `${this.settings.inboxFolder}/${today}.md`;
     const file = this.app.vault.getAbstractFileByPath(path);
-    if (file instanceof import_obsidian5.TFile) {
+    if (file instanceof import_obsidian6.TFile) {
       await this.app.workspace.getLeaf().openFile(file);
     } else {
-      new import_obsidian5.Notice(t("notice.noMsgToday", { path }));
+      new import_obsidian6.Notice(t("notice.noMsgToday", { path }));
     }
   }
 };

@@ -2,6 +2,7 @@
 import { normalizePath, Notice, Plugin, TFile } from 'obsidian';
 import { IlinkClient, type PollResult, sleep } from './core/ilink';
 import type { InboundMessage } from './core/types';
+import { ObsidianTransport } from './core/transport-obsidian';
 import { NodeTransport } from './core/transport-node';
 import { StateStore, type BotState } from './core/store';
 import { appendOutbound, ensureFolder, importMessage, quoteBlock, timeOfDay, type ImportResult } from './core/importer';
@@ -27,9 +28,14 @@ export default class WechatianPlugin extends Plugin {
   settings: WechatianSettings = DEFAULT_SETTINGS;
   store!: StateStore;
   private client: IlinkClient | null = null;
-  /** all HTTP (gateway poll/send, CDN media, article fetches) runs on Node's http stack:
-   *  requestUrl's IPC channel cannot abort or stream 100MB media safely (issue #1) */
-  private transport = new NodeTransport();
+  /** gateway + CDN traffic runs on requestUrl (Chromium's network stack).
+   * The ilink gateway rejects Node's http/https client at the TLS layer —
+   * every getupdates answers 412 no matter which headers we send, while the
+   * same request through requestUrl (or any Chromium/undici stack) passes.
+   * NodeTransport is kept for article fetches (mp.weixin.qq.com), where its
+   * real abort + idle timeout protects against slow-drip hosts. */
+  private transport = new ObsidianTransport();
+  private articleTransport = new NodeTransport();
   private polling = false;
   private stopRequested = false;
   private connState: ConnState = 'disconnected';
@@ -163,7 +169,7 @@ export default class WechatianPlugin extends Plugin {
   }
 
   /** HTTP transport layer (used for scanning in the settings page) */
-  getTransport(): NodeTransport {
+  getTransport(): ObsidianTransport {
     return this.transport;
   }
 
@@ -315,6 +321,8 @@ export default class WechatianPlugin extends Plugin {
           s.lastError = '';
         });
         this.setConn('connecting');
+        // small wait: if the reset itself keeps 412-ing we must not hot-loop
+        await sleep(2000);
         backoff = 1000;
         continue;
       }
@@ -416,7 +424,7 @@ export default class WechatianPlugin extends Plugin {
     if (this.settings.autoImport) {
       let result: ImportResult | null = null;
       try {
-        result = await importMessage(this.app, this.transport, msg, {
+        result = await importMessage(this.app, this.articleTransport, msg, {
           inboxFolder: this.settings.inboxFolder,
           attachmentFolder: this.settings.attachmentFolder,
           articleFolder: this.settings.articleFolder,

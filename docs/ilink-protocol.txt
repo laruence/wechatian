@@ -55,13 +55,18 @@ receiving
   Server holds ~35s; client timeout should exceed it (wechatian: 45s).
   Client timeout = normal, loop again. Response carries new cursor in
   get_updates_buf (empty = keep old).
-  HTTP 412 = the gateway rejects the stored cursor, but the session itself is
-  still good: an empty-cursor poll re-establishes the stream (verified live:
-  old cursor -> 412, same request with "" -> 200 + fresh cursor + sync_buf).
-  On 412, clear the stored cursor and re-poll with "". 401/403 instead point
-  at the credentials themselves: only a QR re-scan fixes those. Retrying the
-  rejected cursor forever changes nothing (observed stuck loop: status bar
-  "error http 412" for minutes while messages queued server-side).
+  HTTP 412 on getupdates = client rejection, not a message problem. Root cause
+  discovered by replay: the gateway TLS-fingerprints the HTTP client — Node's
+  http/https stack gets 412 on EVERY request (headers make no difference),
+  while the same body/headers through Obsidian's requestUrl (Chromium stack)
+  or fetch/undici get 200. All ilink + CDN traffic must therefore use
+  requestUrl; NodeTransport is only safe for third-party sites (articles).
+  Secondary use: if a STORED cursor ever 412s on a clean stack, an empty-
+  cursor poll re-establishes the stream (verified live: 200 + fresh cursor +
+  sync_buf), so clear the cursor and re-poll. 401/403 instead point at the
+  credentials themselves: only a QR re-scan fixes those. Retrying a rejected
+  cursor forever changes nothing (observed stuck loop: status bar spinning
+  while messages queued server-side).
 
   message fields:
     message_type   1 = user, 2 = bot itself (skip)

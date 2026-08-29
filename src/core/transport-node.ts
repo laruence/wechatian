@@ -5,6 +5,10 @@
  * as long as data keeps flowing the request runs to completion (slow is fine),
  * and only a connection that goes silent for the full window is killed.
  * Redirects are followed manually.
+ *
+ * NEVER point this at the ilink gateway: it TLS-fingerprints clients and 412s
+ * every request from Node's stack (requestUrl/Chromium passes). Gateway + CDN
+ * traffic stays on ObsidianTransport; this one is for article fetches only.
  */
 import * as http from 'http';
 import * as https from 'https';
