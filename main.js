@@ -1626,6 +1626,8 @@ var import_obsidian3 = require("obsidian");
 
 // src/core/article.ts
 var UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36";
+var PAGE_TIMEOUT_MS = 2e4;
+var IMAGE_TIMEOUT_MS = 2e4;
 function extractLinks(text) {
   const out = [];
   const re = /https?:\/\/[^\s<>"'，。、）》]+/g;
@@ -1635,7 +1637,9 @@ function extractLinks(text) {
   }
   return out;
 }
-async function fetchArticle(transport, url, parseHtml) {
+async function fetchArticle(transport, url, parseHtml, deadline = Infinity) {
+  const budget = Math.min(PAGE_TIMEOUT_MS, deadline - Date.now());
+  if (budget <= 0) throw new Error("article fetch deadline exceeded");
   const resp = await transport.get(
     url,
     {
@@ -1644,10 +1648,10 @@ async function fetchArticle(transport, url, parseHtml) {
       // ask for an uncompressed body; bodyTextAuto gunzips as a fallback
       "Accept-Encoding": "identity"
     },
-    2e4
+    budget
   );
   if (resp.status !== 200) throw new Error(`http ${resp.status}`);
-  const html = await bodyTextAuto(resp);
+  const html = stripScripts(await bodyTextAuto(resp));
   const parse = parseHtml ?? ((h) => new DOMParser().parseFromString(h, "text/html"));
   const doc = parse(html);
   const title = doc.querySelector('meta[property="og:title"]')?.getAttribute("content") ?? doc.title ?? "";
@@ -1656,22 +1660,33 @@ async function fetchArticle(transport, url, parseHtml) {
   const root = doc.querySelector("#js_content") ?? doc.body;
   const images = [];
   const markdown = normalizeBlocks(toMd(root, images));
-  await downloadImages(transport, images);
+  await downloadImages(transport, images, deadline);
   return { url, title: cleanText(title), description: cleanText(description), account: accountName(doc), markdown, images };
+}
+function stripScripts(html) {
+  return html.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "").replace(/<script\b[^>]*>[\s\S]*$/i, "");
 }
 function accountName(doc) {
   return doc.querySelector("#js_name")?.textContent?.trim() ?? "";
 }
 var IMAGE_CONCURRENCY = 3;
-async function downloadImages(transport, images) {
+async function downloadImages(transport, images, deadline) {
   let next = 0;
   const worker = async () => {
     while (next < images.length) {
       const img = images[next++];
       for (let attempt = 0; attempt < 2 && !img.data; attempt++) {
-        if (attempt > 0) await sleep2(1500);
+        const left = deadline - Date.now();
+        if (left <= 0) {
+          console.warn(`wechatian: article image deadline reached, keeping remote link: ${img.url}`);
+          return;
+        }
+        if (attempt > 0) {
+          if (left < 3e3) return;
+          await sleep2(1500);
+        }
         try {
-          const resp = await transport.get(img.url, { "User-Agent": UA }, 2e4);
+          const resp = await transport.get(img.url, { "User-Agent": UA }, Math.min(IMAGE_TIMEOUT_MS, deadline - Date.now()));
           if (resp.status === 200) {
             img.data = new Uint8Array(resp.body);
           } else {
@@ -2181,6 +2196,8 @@ function buildReceiptReplies(results) {
 }
 
 // src/core/importer.ts
+var ARTICLE_LINK_BUDGET_MS = 3e4;
+var ARTICLE_PHASE_BUDGET_MS = 6e4;
 function pad(n) {
   return n < 10 ? `0${n}` : String(n);
 }
@@ -2234,12 +2251,14 @@ async function importMessage(app, transport, msg, settings) {
   const lines = [];
   lines.push(`**${timeOfDay(msg.timeMs)}** \xB7 ${t("importer.received")}`);
   const links = extractLinks(msg.text);
-  result.linkCount = links.length;
   let display = msg.text.trim();
   if (settings.fetchArticles && links.length) {
+    result.linkCount = links.length;
+    const phaseDeadline = Date.now() + ARTICLE_PHASE_BUDGET_MS;
     for (const url of links.slice(0, 5)) {
       try {
-        const info = await fetchArticle(transport, url, settings.parseHtml);
+        const deadline = Math.min(Date.now() + ARTICLE_LINK_BUDGET_MS, phaseDeadline);
+        const info = await fetchArticle(transport, url, settings.parseHtml, deadline);
         const title = info.title;
         const accountDir = settings.groupArticlesByAccount && info.account ? `/${sanitizeFileName(info.account)}` : "";
         const notePath = `${settings.articleFolder}${accountDir}/${dayStamp(msg.timeMs)} ${sanitizeFileName(title)}.md`;

@@ -172,3 +172,109 @@ test('importMessage: re-sending an article link overwrites the existing note', a
   // no orphaned image files accumulate from the first import
   assert.deepEqual([...v.bins.keys()].sort(), firstImages.sort(), 'old images replaced one-for-one');
 });
+
+/* ---------------------------------------------- script stripping */
+
+/** Scripts wrap the body on both sides: a greedy strip regex (missing the lazy
+ *  quantifier) would swallow #js_content along with them, so this guards the
+ *  strip stays per-block. */
+const SCRIPT_WRAPPED_PAGE = `<html><head>
+<title>fallback</title>
+<meta property="og:title" content="真标题">
+<meta property="og:description" content="真摘要">
+<script>var before = 1;</script>
+</head><body>
+<script>var alsoBefore = 2;</script>
+<span id="js_name">真公众号</span>
+<div id="js_content"><p>正文保留</p><img data-src="https://img.example/img/0.png"></div>
+<script>var after = 3;</script>
+</body></html>`;
+
+test('fetchArticle: scripts around the body are stripped without eating it', async () => {
+  const info = await fetchArticle(articleTransport(SCRIPT_WRAPPED_PAGE), 'https://mp.weixin.qq.com/s/x', parseHtml);
+  assert.equal(info.title, '真标题');
+  assert.equal(info.description, '真摘要');
+  assert.equal(info.account, '真公众号');
+  assert.ok(info.markdown.includes('正文保留'), 'body survives the strip');
+  assert.equal(info.images.length, 1, 'body image still collected');
+  for (const leak of ['var before', 'var alsoBefore', 'var after']) {
+    assert.ok(!info.markdown.includes(leak), `script source absent: ${leak}`);
+  }
+});
+
+test('fetchArticle: unterminated trailing <script still yields the body', async () => {
+  const page = `<html><head><meta property="og:title" content="截断页"></head><body>
+<div id="js_content"><p>正文</p></div>
+<script>var huge = "no closing tag`;
+  const info = await fetchArticle(articleTransport(page), 'https://mp.weixin.qq.com/s/x', parseHtml);
+  assert.equal(info.title, '截断页');
+  assert.ok(info.markdown.includes('正文'));
+});
+
+/* ---------------------------------------------- fetch deadline */
+
+test('fetchArticle: an expired deadline rejects instead of issuing a request', async () => {
+  let called = false;
+  const spy: HttpTransport = {
+    async get(): Promise<HttpResponse> {
+      called = true;
+      return { status: 200, body: new ArrayBuffer(0), headers: lowerHeaders({}) };
+    },
+    async post(): Promise<HttpResponse> {
+      throw new Error('not used');
+    },
+  };
+  await assert.rejects(
+    fetchArticle(spy, 'https://mp.weixin.qq.com/s/x', parseHtml, Date.now() - 1),
+    /deadline exceeded/,
+  );
+  assert.equal(called, false, 'no request issued once the budget is gone');
+});
+
+test('fetchArticle: deadline spent on the page -> images skipped, remote links kept', async () => {
+  // A slow page consumes the whole budget; the images that follow must be
+  // skipped (data stays null) instead of each burning its own timeout. The
+  // page response itself is delayed past the deadline to advance the real
+  // clock deterministically — the fake transport does not enforce the timeout
+  // it is handed, that is the transport's own contract.
+  let imgRequests = 0;
+  const transport: HttpTransport = {
+    async get(url: string): Promise<HttpResponse> {
+      if (url.includes('/img/')) {
+        imgRequests++;
+        return { status: 200, body: new ArrayBuffer(4), headers: lowerHeaders({}) };
+      }
+      await new Promise((r) => setTimeout(r, 25));
+      const body = new TextEncoder().encode(WECHAT_PAGE);
+      return {
+        status: 200,
+        body: body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength) as ArrayBuffer,
+        headers: lowerHeaders({}),
+      };
+    },
+    async post(): Promise<HttpResponse> {
+      throw new Error('not used');
+    },
+  };
+  const info = await fetchArticle(transport, 'https://mp.weixin.qq.com/s/x', parseHtml, Date.now() + 10);
+  assert.ok(info.markdown.includes('![[img:0]]'), 'placeholder left for the importer');
+  assert.equal(info.images[0].data, null, 'image not downloaded');
+  assert.equal(imgRequests, 0, 'no image request started past the deadline');
+});
+
+/* ---------------------------------------------- fetching disabled */
+
+test('importMessage: fetchArticles off records the raw URL and reports no failure', async () => {
+  const v = new Vault();
+  const url = 'https://mp.weixin.qq.com/s/xyz';
+  const r = await importMessage(v.app, articleTransport(WECHAT_PAGE), ARTICLE_MSG(url, 'm3'), {
+    ...IMPORT_OPTS,
+    fetchArticles: false,
+  });
+  assert.equal(r.articleAssets.length, 0, 'no article note created');
+  assert.deepEqual(r.articleFailures, [], 'skipping is not a failure');
+  assert.equal(r.linkCount, 0, 'a link nobody tried to fetch is not counted');
+  const daily = v.files.get('Wechatian/2026-08-27.md')!;
+  assert.ok(daily.includes(url), 'raw URL kept in the daily note');
+  assert.ok(!daily.includes('《'), 'no article link rewriting');
+});

@@ -7,6 +7,11 @@ import { extractLinks, fetchArticle, type HtmlParser } from './article';
 import { detectImageExt } from './crypto';
 import { t } from '../i18n';
 
+/** Article fetch budgets: generous enough that a healthy fetch never hits them,
+ *  they only cap the pathological case. */
+const ARTICLE_LINK_BUDGET_MS = 30_000;
+const ARTICLE_PHASE_BUDGET_MS = 60_000;
+
 export interface ImportSettings {
   inboxFolder: string; // inbox (daily notes)
   attachmentFolder: string; // attachments
@@ -103,12 +108,21 @@ export async function importMessage(
 
   // links -> full article notes first, so the body shows the title link instead of the raw URL
   const links = extractLinks(msg.text);
-  result.linkCount = links.length;
   let display = msg.text.trim();
   if (settings.fetchArticles && links.length) {
+    // counted only when fetching is on: the receipt reports "failed: unknown"
+    // for links that produced neither a note nor a reason, and a link nobody
+    // ever tried to fetch is not a failure
+    result.linkCount = links.length;
+    // The poll loop is serial, so this phase holds back the inbox entry, the
+    // receipt and the typing indicator for this round. Bound it: a normal
+    // article takes a few seconds, so a link that blows the per-link budget
+    // falls back to the raw URL instead of stalling the loop for minutes.
+    const phaseDeadline = Date.now() + ARTICLE_PHASE_BUDGET_MS;
     for (const url of links.slice(0, 5)) {
       try {
-        const info = await fetchArticle(transport, url, settings.parseHtml);
+        const deadline = Math.min(Date.now() + ARTICLE_LINK_BUDGET_MS, phaseDeadline);
+        const info = await fetchArticle(transport, url, settings.parseHtml, deadline);
         const title = info.title;
         // optional per-account grouping: <articleFolder>/<account>/; article images always stay
         // inside the article tree in an assets subdir (chat attachments use attachmentFolder)

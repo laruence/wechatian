@@ -5,6 +5,10 @@ import { bodyTextAuto } from './http';
 const UA =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36';
 
+/** Per-request idle timeouts; the caller's deadline caps the total. */
+const PAGE_TIMEOUT_MS = 20_000;
+const IMAGE_TIMEOUT_MS = 20_000;
+
 export interface ArticleImage {
   url: string;
   ext: string;
@@ -42,8 +46,19 @@ export function extractLinks(text: string): string[] {
  * the body in #js_content and lazy-load images via data-src; generic pages fall
  * back to <body>. Throws an Error with a short reason on failure, so callers
  * can tell the user why (e.g. "http 503", "no title found on page").
+ *
+ * `deadline` (absolute ms) bounds the whole fetch: per-request idle timeouts do
+ * not bound the total, so without it one message could occupy the importer for
+ * minutes and hold back the inbox entry.
  */
-export async function fetchArticle(transport: HttpTransport, url: string, parseHtml?: HtmlParser): Promise<ArticleInfo> {
+export async function fetchArticle(
+  transport: HttpTransport,
+  url: string,
+  parseHtml?: HtmlParser,
+  deadline = Infinity,
+): Promise<ArticleInfo> {
+  const budget = Math.min(PAGE_TIMEOUT_MS, deadline - Date.now());
+  if (budget <= 0) throw new Error('article fetch deadline exceeded');
   const resp = await transport.get(
     url,
     {
@@ -52,10 +67,10 @@ export async function fetchArticle(transport: HttpTransport, url: string, parseH
       // ask for an uncompressed body; bodyTextAuto gunzips as a fallback
       'Accept-Encoding': 'identity',
     },
-    20_000,
+    budget,
   );
   if (resp.status !== 200) throw new Error(`http ${resp.status}`);
-  const html = await bodyTextAuto(resp);
+  const html = stripScripts(await bodyTextAuto(resp));
   const parse = parseHtml ?? ((h: string) => new DOMParser().parseFromString(h, 'text/html'));
   const doc = parse(html);
 
@@ -69,9 +84,19 @@ export async function fetchArticle(transport: HttpTransport, url: string, parseH
   const root = doc.querySelector('#js_content') ?? doc.body;
   const images: ArticleImage[] = [];
   const markdown = normalizeBlocks(toMd(root, images));
-  await downloadImages(transport, images);
+  await downloadImages(transport, images, deadline);
 
   return { url, title: cleanText(title), description: cleanText(description), account: accountName(doc), markdown, images };
+}
+
+/**
+ * Drop <script> blocks before parsing: on mp.weixin.qq.com they are 95-98% of
+ * the payload while the body we read is under 4%, so the parser would build a
+ * full DOM for bytes we never touch. The regex pass is far cheaper than that.
+ * Second pass handles an unterminated trailing <script from a truncated body.
+ */
+function stripScripts(html: string): string {
+  return html.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '').replace(/<script\b[^>]*>[\s\S]*$/i, '');
 }
 
 /**
@@ -88,18 +113,30 @@ function accountName(doc: Document): string {
  * The pool size is the throttle for the throttling CDN; one retry per image
  * (with a pause before the retry). Failures keep the remote link and are
  * logged so the cause shows up in the developer console.
+ *
+ * Images are best-effort: once the deadline passes we stop starting downloads
+ * and the remaining ones keep their remote link, so a slow CDN costs image
+ * files but never the article note.
  */
 const IMAGE_CONCURRENCY = 3;
 
-async function downloadImages(transport: HttpTransport, images: ArticleImage[]): Promise<void> {
+async function downloadImages(transport: HttpTransport, images: ArticleImage[], deadline: number): Promise<void> {
   let next = 0;
   const worker = async (): Promise<void> => {
     while (next < images.length) {
       const img = images[next++];
       for (let attempt = 0; attempt < 2 && !img.data; attempt++) {
-        if (attempt > 0) await sleep(1500);
+        const left = deadline - Date.now();
+        if (left <= 0) {
+          console.warn(`wechatian: article image deadline reached, keeping remote link: ${img.url}`);
+          return;
+        }
+        if (attempt > 0) {
+          if (left < 3000) return; // no room for a backoff plus a retry
+          await sleep(1500);
+        }
         try {
-          const resp = await transport.get(img.url, { 'User-Agent': UA }, 20_000);
+          const resp = await transport.get(img.url, { 'User-Agent': UA }, Math.min(IMAGE_TIMEOUT_MS, deadline - Date.now()));
           if (resp.status === 200) {
             img.data = new Uint8Array(resp.body);
           } else {
