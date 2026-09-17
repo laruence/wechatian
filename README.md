@@ -7,6 +7,10 @@
 
 Wechatian is an [Obsidian](https://obsidian.md) plugin that bridges WeChat and your vault through Tencent's official **ilink** bot gateway — no unofficial protocol hacks, no self-hosted relay. Messages you receive become searchable notes; your AI assistant can WeChat you by dropping a file into a folder.
 
+**直接打通微信到你的知识库**
+
+Wechatian 是一个 [Obsidian](https://obsidian.md) 插件，通过腾讯官方 **ilink** 机器人网关打通微信与你的知识库——走官方协议，无需自建中转站。收到的消息自动变成可搜索的笔记；AI 助理只需往文件夹里丢一个文件，就能给你发微信。
+
 ## Why
 
 Your most important conversations happen on WeChat — but they're trapped in the app: unsearchable, unlinkable, lost when you switch phones. Wechatian pulls them into your knowledge base:
